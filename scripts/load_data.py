@@ -14,8 +14,8 @@ config = {
   'database': 'stackoverflow'
 }
 
-date_from = '2017-01-01'
-date_to = '2017-06-01'
+date_from = '2016-01-01'
+date_to = '2017-01-01'
 
 def load_data_from_azure(file_name, mysql_string):
     if os.path.exists(file_name):

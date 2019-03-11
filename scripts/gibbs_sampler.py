@@ -22,9 +22,9 @@ def sample_assignments(user_ix, action_trajectory, params):
     likelihood += theta
 
     # normalize
-    likelihood -= logsumexp(likelihood)
+    likelihood_ = np.exp(likelihood - logsumexp(likelihood))
 
-    assignment = np.random.choice(assignment_choices, p=np.exp(likelihood))
+    assignment = np.random.choice(assignment_choices, p=likelihood_/np.sum(likelihood_))
 
     return (user_ix, assignment)
 
@@ -64,7 +64,7 @@ def run_sampler(user_actions, num_iter=50, num_profiles=10, alpha=[], beta=[], v
     }
 
     # randomly assign a user to a profile class
-    assignments = np.random.choice(assignment_choices, p=theta, size=len(user_actions))
+    assignments = np.random.choice(assignment_choices, p=np.exp(theta), size=len(user_actions))
 
     for epoch in range(num_iter):
 
