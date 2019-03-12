@@ -16,6 +16,8 @@ config = {
 
 date_from = '2016-01-01'
 date_to = '2017-01-01'
+date_from2 = '2015-06-01'
+date_to2 = '2017-06-01'
 
 def load_data_from_azure(file_name, mysql_string):
     if os.path.exists(file_name):
@@ -73,7 +75,8 @@ def load_silver_editor_edits():
             ON (
                 b.Name = 'Strunk & White' AND
                 b.UserId = ph.UserId AND
-                b.Date BETWEEN '{date_from}' AND '{date_to}'
+                b.Date BETWEEN '{date_from}' AND '{date_to}' AND
+                ph.CreationDate BETWEEN '{date_from2}' AND '{date_to2}'
             );'''
     file_name = '../data/df_silver_editor_edits.pkl'
     df = load_data_from_azure(file_name, my_sql)
@@ -85,7 +88,8 @@ def load_silver_editor_comments():
             ON (
                 b.Name = 'Strunk & White' AND
                 b.UserId = c.UserId AND
-                b.Date BETWEEN '{date_from}' AND '{date_to}'
+                b.Date BETWEEN '{date_from}' AND '{date_to}' AND
+                c.CreationDate BETWEEN '{date_from2}' AND '{date_to2}'
             );'''
     file_name = '../data/df_silver_editor_comments.pkl'
     df = load_data_from_azure(file_name, my_sql)
