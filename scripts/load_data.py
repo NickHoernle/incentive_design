@@ -14,10 +14,10 @@ config = {
   'database': 'stackoverflow'
 }
 
-date_from = '2016-01-01'
+date_from = '2016-06-01'
 date_to = '2017-01-01'
 date_from2 = '2015-06-01'
-date_to2 = '2017-06-01'
+date_to2 = '2018-01-01'
 
 def load_data_from_azure(file_name, mysql_string):
     if os.path.exists(file_name):
@@ -152,3 +152,27 @@ def load_not_silver_editors_posts(user_ids):
     file_name = '../data/df_not_silver_editors_posts.pkl'
     df = load_data_from_azure(file_name, my_sql)
     return df
+
+# ALTER TABLE badges ADD FOREIGN KEY (UserId) REFERENCES users(Id);
+# ALTER TABLE posthistory ADD FOREIGN KEY (UserId) REFERENCES users(Id);
+# ALTER TABLE posthistory ADD FOREIGN KEY (UserId) REFERENCES badges(UserId);
+# ALTER TABLE posthistory ADD FOREIGN KEY (PostId) REFERENCES posts(Id);
+# ALTER TABLE posthistory ADD FOREIGN KEY (PostId) REFERENCES posts(Id);
+
+#
+# SELECT ph_count, COUNT(*) FROM
+# (
+#   SELECT ph.UserId,
+#          YEAR(ph.CreationDate) year,
+#          MONTH(ph.CreationDate) month,
+#          DAY(ph.CreationDate) day,
+#          COUNT(DISTINCT ph.Id) ph_count
+#   FROM posthistory as ph
+#   INNER JOIN posts as p
+#   ON (
+#     p.Id = ph.PostId AND
+#     p.OwnerUserId != ph.UserId AND
+#     ph.PostHistoryTypeId in (4,5) /*only interested in body and title*/
+#   )
+#   GROUP BY UserId, YEAR(ph.CreationDate), MONTH(ph.CreationDate), DAY(ph.CreationDate)
+# ) in_table GROUP BY ph_count;
