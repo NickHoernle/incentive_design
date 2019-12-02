@@ -5,6 +5,7 @@ __pycache__/
 
 data/*.pt
 data/*.json
+data/*.csv
 models/*.pt
 
 # C extensions
