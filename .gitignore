@@ -8,6 +8,10 @@ data/*.json
 data/*.csv
 models/*.pt
 
+legacy
+.idea
+.DS_Store
+
 # C extensions
 *.so
 
