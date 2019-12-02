@@ -3,7 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-data/*
+data/*.pt
+data/*.json
+models/*.pt
 
 # C extensions
 *.so
