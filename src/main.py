@@ -35,7 +35,7 @@ def main(args):
         'window_length': window_len,
         'badge_focus': 'Electorate',
         'out_dim': 'QuestionVotes',
-        'data_path': 'data',
+        'data_path': '../data',
     }
 
     dset_train = so_data.StackOverflowDataset(dset_type='train', subsample=4000, centered=False,
@@ -49,13 +49,13 @@ def main(args):
     valid_loader = DataLoader(dset_valid, **params)
 
     model_to_test = {
-        'baseline': models.BaselineVAE,
-        'linear': models.LinearParametricVAE,
-        'personalised_linear': models.LinearParametricPlusSteerParamVAE,
-        'full_parameterised': models.FullParameterisedVAE,
-        'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
-        # 'flexible_linear': models.FlexibleLinearParametricVAE,
-        # 'personalised_flexible_linear': models.FlexibleLinearPlusSteerParamVAE,
+        # 'baseline': models.BaselineVAE,
+        # 'linear': models.LinearParametricVAE,
+        # 'personalised_linear': models.LinearParametricPlusSteerParamVAE,
+        # 'full_parameterised': models.FullParameterisedVAE,
+        # 'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
+        'flexible_linear': models.FlexibleLinearParametricVAE,
+        'personalised_flexible_linear': models.FlexibleLinearPlusSteerParamVAE,
     }
 
     dset_shape = dset_train.data_shape

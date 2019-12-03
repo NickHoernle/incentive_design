@@ -55,6 +55,7 @@ class StackOverflowDataset(data.Dataset):
         self.centered = centered
         self.window_length = window_length
         self.dset_type = dset_type
+        self.data_path = data_path
 
         if input_length == 'full':
             self.input_length = self.window_length * 2
@@ -113,7 +114,7 @@ class StackOverflowDataset(data.Dataset):
         badge_index = self.badge_ids[ID]
 
         # Load data and get label
-        X = torch.load('data/user_' + ID + '.pt')
+        X = torch.load(os.path.join(self.data_path, 'user_' + ID + '.pt'))
         output = torch.zeros(size=(2*self.window_length, X.size()[1]))
 
         if self.centered:

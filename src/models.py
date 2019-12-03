@@ -139,7 +139,7 @@ class FullParameterisedVAE(BaselineVAE):
     def kernel(self, z, x, **kwargs):
 
         kernel_features = torch.ones(size=(2 * self.out_dim,)).float().to(self.device)
-        kernel_features[:self.out_dim + 1] =  F.softplus(self.badge_param_bias[0]+self.badge_param[:self.out_dim + 1])
+        kernel_features[:self.out_dim + 1] = F.softplus(self.badge_param_bias[0]+self.badge_param[:self.out_dim + 1])
         kernel_features[self.out_dim + 1:] = -F.softplus(self.badge_param_bias[1]+self.badge_param[self.out_dim + 1:])
 
         to_return = kernel_features[kwargs['kernel_data'].long().view(-1, self.out_dim)]
@@ -150,19 +150,23 @@ class FullParameterisedPlusSteerParamVAE(AddSteeringParameter, FullParameterised
     def __init__(self, obsdim, outdim, **kwargs):
         super(FullParameterisedPlusSteerParamVAE, self).__init__(obsdim, outdim, **kwargs)
 
-# class FlexibleLinearParametricVAE(BaselineVAE):
-#     def __init__(self, obsdim, outdim, **kwargs):
-#         super(FlexibleLinearParametricVAE, self).__init__(obsdim, outdim, num_kernel_weights=3, **kwargs)
+class FlexibleLinearParametricVAE(BaselineVAE):
+    def __init__(self, obsdim, outdim, **kwargs):
+        super(FlexibleLinearParametricVAE, self).__init__(obsdim, outdim, num_kernel_weights=4, **kwargs)
+        # initialise away from 0
+        self.badge_param = nn.Parameter(torch.tensor([-5.0,-0.0,-5.0,-0.0,0.0,0.0], requires_grad=True).float())
+
+    def kernel(self, z, x, **kwargs):
+        kernel_features = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
+
+        kernel_features[:self.out_dim+1] = F.softplus(
+            self.badge_param[0]*self.positive_badge_param[4]+self.positive_badge_param[1] * torch.arange(0, self.out_dim+1).float().to(self.device))
+        kernel_features[self.out_dim + 1:] = -F.softplus(
+            self.badge_param[2]*self.positive_badge_param[5]+self.positive_badge_param[3] * torch.arange(0, self.out_dim-1).float().to(self.device))
+
+        return kernel_features[kwargs['kernel_data'].long().view(-1,self.out_dim)]
 #
-#     def kernel(self, z, x, **kwargs):
-#         kernel_features = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
-#         kernel_features[self.out_dim + 1:] = -1
-#         kernel_features[:self.out_dim + 1] = F.softplus(torch.arange(1, self.out_dim + 2).float().to(self.device) + self.badge_param[2])/(self.out_dim + 2)
-#         kernel_features[self.out_dim + 1:] *= self.positive_badge_param[0]
-#         kernel_features[:self.out_dim + 1] *= self.positive_badge_param[1]
-#         return kernel_features[kwargs['kernel_data'].long().view(-1, self.out_dim)]
 #
-#
-# class FlexibleLinearPlusSteerParamVAE(AddSteeringParameter, FlexibleLinearParametricVAE):
-#     def __init__(self, obsdim, outdim, **kwargs):
-#         super(FlexibleLinearPlusSteerParamVAE, self).__init__(obsdim, outdim, **kwargs)
+class FlexibleLinearPlusSteerParamVAE(AddSteeringParameter, FlexibleLinearParametricVAE):
+    def __init__(self, obsdim, outdim, **kwargs):
+        super(FlexibleLinearPlusSteerParamVAE, self).__init__(obsdim, outdim, **kwargs)
