@@ -8,6 +8,10 @@ import numpy as np
 import pandas as pd
 import json
 
+from tqdm import tqdm
+
+from sklearn.preprocessing import MinMaxScaler
+
 ACTIONS = ['Answers', 'Questions', 'Comments', 'Edits', 'AnswerVotes', 'QuestionVotes', 'ReviewTasks']
 BADGES = ['CivicDuty', 'CopyEditor', 'Electorate', 'Reviewer', 'Steward', 'StrunkWhite']
 action_ixs = {a:i for i,a in enumerate(ACTIONS)}
@@ -86,12 +90,11 @@ class StackOverflowDataset(data.Dataset):
 
     def __data_trans_in(self, data):
         data[data > 0] = 1
-        # return torch.log1p(data.float())
-        return data.float()
+        return data.float().numpy()
 
     def __data_trans_out(self, data):
         data[data > 0] = 1
-        return data.float()
+        return data.float().numpy()
 
     def __len__(self):
         return len(self.list_IDs)
@@ -123,7 +126,6 @@ class StackOverflowDataset(data.Dataset):
             badge_index = self.window_length
 
         else:
-            # prob_of_center = generate_linear_selection_probabilities(len(X), badge_index, self.window_length)
             start = np.max((0, badge_index-self.window_length+1))
             stop = np.min((badge_index+self.window_length-1, X.size()[0]))
 
@@ -153,24 +155,70 @@ class StackOverflowDataset(data.Dataset):
         start = 2*self.window_length-badge_index
         stop = 4*self.window_length-badge_index
 
-        return (x_in,
+        return (torch.tensor(x_in).float(),
                 torch.tensor(kernel_data[start: stop]).view(-1).float(),
-                x_out,
+                torch.tensor(x_out).float(),
                 prox_to_badge.view(-1,).float(),
                 torch.tensor(badge_index, dtype=torch.float))
 
+class IdentityScaler:
+    def transform(self, x):
+        return x
+    def inverse_transform(self, x):
+        return x
 
-def generate_linear_selection_probabilities(length_of_seq, day_of_badge, window_length):
-    traj = -np.abs(np.arange(0, length_of_seq) - day_of_badge)
-    traj -= np.max(traj)
-    traj += window_length
+class StackOverflowDatasetIncCounts(StackOverflowDataset):
+    def __init__(self, data_path='../data', dset_type='train', badge_focus='Electorate', subsample=5000, centered=True,
+                 window_length=70, input_length='full', out_dim=None, scaler_in=IdentityScaler(), scaler_out=IdentityScaler(), self_initialise=False):
+        super(StackOverflowDatasetIncCounts, self).__init__(data_path=data_path, dset_type=dset_type, badge_focus=badge_focus, subsample=subsample,
+                         centered=centered, window_length=window_length, input_length=input_length, out_dim=out_dim)
 
-    # don't pick anything in the window length
-    traj[traj<0] = 0
+        self.scaler_in = scaler_in
+        self.scaler_out = scaler_out
 
-    # normalise
-    traj = traj / np.sum(traj)
-    return traj
+        if self_initialise:
+            self.scaler_in, self.scaler_out = calculate_feature_transformation(self)
+
+    def _StackOverflowDataset__data_trans_in(self, data):
+        mid = torch.log1p(data.float().view(-1, self.data_shape[0]*self.data_shape[1])).numpy()
+        return self.scaler_in.transform(mid).reshape(self.data_shape[0], self.data_shape[1])
+
+    def _StackOverflowDataset__data_trans_out(self, data):
+        # return self.scaler_out.transform(torch.log1p(data.float()))
+        return data.float().numpy()
+
+    def get_scalers(self):
+        return self.scaler_in, self.scaler_out
+
+    def inverse_transform_in(self, data):
+        return torch.exp(self.scaler_in.inverse_transform(data.float))-1
+
+    def inverse_transform_out(self, data):
+        return data.float
+
+def calculate_feature_transformation(train_dataset):
+    dat_in, dat_out = [], []
+
+    print("Processing training data")
+    for i in tqdm(range(len(train_dataset))):
+        in_d, kern, out_d, _, _ = train_dataset.__getitem__(i)
+        dat_in.append(in_d.numpy())
+        dat_out.append(out_d.numpy())
+
+    dat_in = np.array(dat_in)
+    dat_out = np.array(dat_out)
+
+    dset_shape = dat_in.shape
+    dat_in = dat_in.reshape(-1, dset_shape[1] * dset_shape[2])
+    dat_out = dat_out.reshape(-1, dset_shape[1])
+
+    scaler_in = MinMaxScaler(feature_range=(-1, 1))
+    scaler_out = MinMaxScaler(feature_range=(0, 1))
+
+    scaler_in.fit(dat_in)
+    scaler_out.fit(dat_out)
+
+    return scaler_in, scaler_out
 
 
 ######################################################################################################################

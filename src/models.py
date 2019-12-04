@@ -4,6 +4,7 @@ from torch.nn import functional as F
 import math
 
 BADGE_THRESHOLD = 500
+poisson_loss = nn.PoissonNLLLoss(reduction='sum', log_input=False)
 
 # Reconstruction + KL divergence losses summed over all elements and batch
 def BCE_loss_function(recon_x, x, mu, logvar, data_shape, act_choice=5):
@@ -18,6 +19,21 @@ def BCE_loss_function(recon_x, x, mu, logvar, data_shape, act_choice=5):
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
     return BCE + KLD
+
+
+def Poisson_loss_function(recon_x, x, mu, logvar, data_shape, act_choice=5):
+
+    BCE = poisson_loss(recon_x, x)
+    # BCE = l1_loss(recon_x, outcome)
+
+    # see Appendix B from VAE paper:
+    # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
+    # https://arxiv.org/abs/1312.6114
+    # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+    return BCE + KLD
+
 
 class BaselineVAE(nn.Module):
     def __init__(self, obsdim, outdim, **kwargs):
@@ -131,11 +147,6 @@ class FullParameterisedVAE(BaselineVAE):
     def __init__(self, obsdim, outdim, **kwargs):
         super(FullParameterisedVAE, self).__init__(obsdim, outdim, num_kernel_weights=2*outdim, **kwargs)
 
-    def __invert_tensor(self, tensor):
-        inv_idx = torch.arange(tensor.size(0) - 1, -1, -1).long().to(self.device)
-        inv_tensor = tensor.index_select(0, inv_idx)
-        return inv_tensor
-
     def kernel(self, z, x, **kwargs):
 
         kernel_features = torch.ones(size=(2 * self.out_dim,)).float().to(self.device)
@@ -170,3 +181,57 @@ class FlexibleLinearParametricVAE(BaselineVAE):
 class FlexibleLinearPlusSteerParamVAE(AddSteeringParameter, FlexibleLinearParametricVAE):
     def __init__(self, obsdim, outdim, **kwargs):
         super(FlexibleLinearPlusSteerParamVAE, self).__init__(obsdim, outdim, **kwargs)
+
+
+
+###############################################################################################
+# Modeling the actual count data
+###############################################################################################
+
+class BaselineVAECount(BaselineVAE):
+    def __init__(self, obsdim, outdim, **kwargs):
+        super(BaselineVAECount, self).__init__(obsdim, outdim, **kwargs)
+
+    def decode(self, z, **kwargs):
+        h = F.relu(self.decoder1(z))
+        h1 = F.relu(self.decoder2(h))
+        prob_of_act = self.decoder3(h1).repeat(1, self.n_out)[:,:self.out_dim]
+        prob_of_act = prob_of_act + kwargs['kernel']
+
+        return F.softplus(prob_of_act)
+
+
+class AddSteeringParameterCount(BaselineVAECount):
+    def __init__(self, obsdim, outdim, **kwargs):
+        super(AddSteeringParameterCount, self).__init__(obsdim, outdim, **kwargs)
+        self.decoder1 = nn.Linear(self.latent_dim-1, 200)
+        self.steer_weight = nn.Parameter(torch.randn(1).float(), requires_grad=True)
+
+    @property
+    def positive_steer_weight(self):
+        return F.softplus(self.steer_weight)
+
+    def decode(self, z, **kwargs):
+        h = F.relu(self.decoder1(z[:,:self.latent_dim-1]))
+        h1 = F.relu(self.decoder2(h))
+        prob_of_act = self.decoder3(h1).repeat(1, self.n_out)[:, :self.out_dim]
+        prob_of_act = prob_of_act + torch.sigmoid(self.positive_steer_weight*z[:,-1].view(-1,1))*kwargs['kernel']
+        return F.softplus(prob_of_act)
+
+
+class LinearParametricVAECount(LinearParametricVAE, BaselineVAECount):
+    pass
+
+
+class LinearParametricPlusSteerParamVAECount(AddSteeringParameterCount, LinearParametricVAECount):
+    def __init__(self, obsdim, outdim, **kwargs):
+        super(LinearParametricPlusSteerParamVAECount, self).__init__(obsdim, outdim, **kwargs)
+
+
+class FullParameterisedVAECount(FullParameterisedVAE, BaselineVAECount):
+    pass
+
+
+class FullParameterisedPlusSteerParamVAECount(AddSteeringParameterCount, FullParameterisedVAECount):
+    def __init__(self, obsdim, outdim, **kwargs):
+        super(FullParameterisedPlusSteerParamVAECount, self).__init__(obsdim, outdim, **kwargs)
