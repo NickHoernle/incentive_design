@@ -25,7 +25,7 @@ def main(args):
     # Loading Parameters
     params = {'batch_size': 256, 'shuffle': True, 'num_workers': 20}
 
-    max_epochs = 1000
+    max_epochs = 1
     PRINT_NUM = 50
     learning_rate = 1e-3
     weight_decay = 1e-5
@@ -65,7 +65,7 @@ def main(args):
 
         model = model_class(obsdim=dset_shape[0]*dset_shape[1], outdim=window_len*2, device=device, proximity_to_badge=True).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-        loss = lambda x1,x2,x3,x4: models.BCE_loss_function(x1,x2,x3,x4, data_shape=dset_shape, act_choice=5)
+        loss = lambda x1,x2,x3: models.BCE_loss_function(x1,x2,x3, data_shape=dset_shape, act_choice=5)
 
         print("Training model for: {}".format(name))
         model = train_model(model, train_loader, valid_loader, optimizer, loss, NUM_EPOCHS=max_epochs, PRINT_NUM=PRINT_NUM)
@@ -86,7 +86,7 @@ def train_model(model, train_loader, valid_loader, optimizer, loss_fn, NUM_EPOCH
             train_in, kernel_data, train_out, train_prox, badge_date = train_in.to(device), kernel_data.to(device), train_out.to(device), train_prox.to(device), badge_date.to(device)
 
             # Model computations
-            recon_batch, mu, logvar = model(train_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=train_prox)
+            recon_batch, latent_loss = model(train_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=train_prox)
 
             size = recon_batch.size()
             index = torch.ones_like(recon_batch)
@@ -95,7 +95,7 @@ def train_model(model, train_loader, valid_loader, optimizer, loss_fn, NUM_EPOCH
             # index[torch.arange(len(recon_batch)), ((badge_date + 1)%len(recon_batch[0])).long()] = 0
             index = (index == 1)
 
-            loss = loss_fn(recon_batch[index].view(size[0], -1), train_out[index].view(size[0], -1), mu, logvar)
+            loss = loss_fn(recon_batch[index].view(size[0], -1), train_out[index].view(size[0], -1), latent_loss)
             # loss = 100*torch.sum(model.badge_param.pow(2))
             loss.backward()
 
@@ -119,9 +119,9 @@ def train_model(model, train_loader, valid_loader, optimizer, loss_fn, NUM_EPOCH
             for val_in, kernel_data, val_out, val_prox, badge_date in valid_loader:
                 # Transfer to GPU
                 val_in, kernel_data, val_out, val_prox, badge_date = val_in.to(device), kernel_data.to(device), val_out.to(device), val_prox.to(device), badge_date.to(device)
-                recon_batch, mu, logvar = model(val_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=val_prox)
+                recon_batch, latent_loss = model(val_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=val_prox)
 
-                loss = loss_fn(recon_batch, val_out, mu, logvar)
+                loss = loss_fn(recon_batch, val_out, latent_loss)
                 validation_loss += loss.item()
 
             print('====> Epoch: {} Average Valid loss: {:.4f}'.format(i, validation_loss/len(valid_loader.dataset)))

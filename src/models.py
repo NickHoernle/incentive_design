@@ -2,33 +2,27 @@ import torch.nn as nn
 import torch
 from torch.nn import functional as F
 import math
+import torch.distributions as distrib
 from torch.distributions import Poisson
+from normalizing_flows import NormalizingFlow
 
 BADGE_THRESHOLD = 500
 poisson_loss = nn.PoissonNLLLoss(reduction='sum', log_input=False)
 
 # Reconstruction + KL divergence losses summed over all elements and batch
-def BCE_loss_function(recon_x, x, mu, logvar, data_shape, act_choice=5):
+def BCE_loss_function(recon_x, x, KLD, data_shape, act_choice=5):
 
     BCE = F.binary_cross_entropy(recon_x, x, reduction='sum')
     # BCE = l1_loss(recon_x, outcome)
 
-    # see Appendix B from VAE paper:
-    # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
-    # https://arxiv.org/abs/1312.6114
-    # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-
     return BCE + KLD
 
 
-def Poisson_loss_function(recon_x, x, mu, logvar, data_shape, act_choice=5):
+def Poisson_loss_function(recon_x, x, latent_loss, data_shape, act_choice=5):
 
     BCE = poisson_loss(recon_x, x)
 
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-
-    return BCE + KLD
+    return BCE + latent_loss
 
 def ZeroInflatedPoisson_loss_function(recon_x, x, mu, logvar, data_shape, act_choice=5):
 
@@ -128,11 +122,24 @@ class BaselineVAE(nn.Module):
 
         return torch.sigmoid(prob_of_act)
 
+    def latent_loss(self, x, z_params):
+        n_batch = x.size(0)
+        # Retrieve mean and var
+        mu, sigma = z_params
+        # Re-parametrize
+        q = distrib.Normal(torch.zeros(mu.shape[1]), torch.ones(sigma.shape[1]))
+        z = (sigma * q.sample((n_batch,))) + mu
+        # Compute KL divergence
+        kl_div = -0.5 * torch.sum(1 + sigma - mu.pow(2) - sigma.exp())
+        kl_div = kl_div / n_batch
+        return z, kl_div
+
     # define the encoder and decoder here!
     def forward(self, x, **kwargs):
         mu, logvar = self.encode(x.view(-1, self.obs_dim), **kwargs)
-        z = self.reparameterize(mu, logvar)
-        return self.decode(z, kernel=self.kernel(z, x, **kwargs)), mu, logvar
+        z, latent_loss = self.latent_loss(x, (mu, logvar))
+        # z = self.reparameterize(mu, logvar)
+        return self.decode(z, kernel=self.kernel(z, x, **kwargs)), latent_loss
 
     def kernel(self, z, x, **kwargs):
         kernel_features = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
@@ -255,6 +262,7 @@ class BaselineVAECount(BaselineVAE):
 
         # weights to control for bump
         self.badge_bump_param_count = nn.Parameter(torch.tensor([0.0, 0.0], requires_grad=True).float())
+
 
     @property
     def positive_badge_count_param(self):

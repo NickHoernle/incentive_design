@@ -13,7 +13,6 @@ from torch.nn import functional as F
 import load_so_data as so_data
 from torch.backends import cudnn
 
-
 # CUDA for PyTorch
 use_cuda = torch.cuda.is_available()
 device = torch.device("cuda:0" if use_cuda else "cpu")
@@ -65,7 +64,7 @@ def main(args):
 
         model = model_class(obsdim=dset_shape[0]*dset_shape[1], outdim=dset_shape[0], device=device, proximity_to_badge=True).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        loss = lambda x1,x2,x3,x4: models.ZeroInflatedPoisson_loss_function(x1,x2,x3,x4, data_shape=dset_shape, act_choice=5)
+        loss = lambda x1,x2,x3: models.ZeroInflatedPoisson_loss_function(x1,x2,x3, data_shape=dset_shape, act_choice=5)
 
         print("Training model for: {}".format(name))
         model = train_model(model, train_loader, valid_loader, optimizer, loss, NUM_EPOCHS=max_epochs, PRINT_NUM=PRINT_NUM)
@@ -86,10 +85,10 @@ def train_model(model, train_loader, valid_loader, optimizer, loss_fn, NUM_EPOCH
             train_in, kernel_data, train_out, train_prox, badge_date = train_in.to(device), kernel_data.to(device), train_out.to(device), train_prox.to(device), badge_date.to(device)
 
             # Model computations
-            recon_batch, mu, logvar = model(train_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=train_prox)
+            recon_batch, latent_loss = model(train_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=train_prox)
             # print(train_out)
             # print(recon_batch)
-            loss = loss_fn(recon_batch, train_out, mu, logvar)
+            loss = loss_fn(recon_batch, train_out, latent_loss)
             # loss = 100*torch.sum(model.badge_param.pow(2))
             loss.backward()
 
