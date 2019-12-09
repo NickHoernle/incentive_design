@@ -25,7 +25,7 @@ def main(args):
     # Loading Parameters
     params = {'batch_size': 256, 'shuffle': True, 'num_workers': 20}
 
-    max_epochs = 250
+    max_epochs = 1000
     PRINT_NUM = 50
     learning_rate = 1e-3
     weight_decay = 1e-5
@@ -51,8 +51,8 @@ def main(args):
 
     model_to_test = {
         'baseline_count': models.BaselineVAECount,
-        'linear_count': models.LinearParametricVAECount,
-        'personalised_linear_count': models.LinearParametricPlusSteerParamVAECount,
+        # 'linear_count': models.LinearParametricVAECount,
+        # 'personalised_linear_count': models.LinearParametricPlusSteerParamVAECount,
         'full_parameterised_count': models.FullParameterisedVAECount,
         'full_personalised_parameterised_count': models.FullParameterisedPlusSteerParamVAECount,
         # 'flexible_linear': models.FlexibleLinearParametricVAE,
@@ -65,7 +65,7 @@ def main(args):
 
         model = model_class(obsdim=dset_shape[0]*dset_shape[1], outdim=dset_shape[0], device=device, proximity_to_badge=True).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        loss = lambda x1,x2,x3,x4: models.Poisson_loss_function(x1,x2,x3,x4, data_shape=dset_shape, act_choice=5)
+        loss = lambda x1,x2,x3,x4: models.ZeroInflatedPoisson_loss_function(x1,x2,x3,x4, data_shape=dset_shape, act_choice=5)
 
         print("Training model for: {}".format(name))
         model = train_model(model, train_loader, valid_loader, optimizer, loss, NUM_EPOCHS=max_epochs, PRINT_NUM=PRINT_NUM)

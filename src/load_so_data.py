@@ -103,11 +103,13 @@ class StackOverflowDataset(data.Dataset):
         prox_to_badge = torch.cumsum(output[:, self.out_dim], dim=0).float()
         prox_to_badge = (prox_to_badge + (500 - prox_to_badge[badge_index])) / 500
 
+        prox_to_badge = 1 - prox_to_badge
         prox_to_badge[badge_index + 1:] = 0
         prox_to_badge[prox_to_badge < 0] = 0
-        prox_to_badge = prox_to_badge - prox_to_badge[0]
-        prox_to_badge[badge_index + 1:] = 0
-        prox_to_badge[prox_to_badge < 0] = 0
+        prox_to_badge[prox_to_badge > 1] = 0
+        # prox_to_badge = prox_to_badge - prox_to_badge[0]
+        # prox_to_badge[badge_index + 1:] = 0
+        # prox_to_badge[prox_to_badge < 0] = 0
 
         return prox_to_badge
 
@@ -120,6 +122,12 @@ class StackOverflowDataset(data.Dataset):
         X = torch.load(os.path.join(self.data_path, 'user_' + ID + '.pt'))
         output = torch.zeros(size=(2*self.window_length, X.size()[1]))
 
+        # if torch.sum(X[badge_index, [4,5]]) == 0:
+        #     badge_index = badge_index-1
+        #     if torch.sum(X[badge_index, [4, 5]]) == 0:
+        #         print(X[badge_index-1:badge_index+3].T)
+        #         print()
+
         if self.centered:
             center = badge_index
             # correct where the badge was achieved
@@ -128,8 +136,10 @@ class StackOverflowDataset(data.Dataset):
         else:
             start = np.max((0, badge_index-self.window_length+1))
             stop = np.min((badge_index+self.window_length-1, X.size()[0]))
+            options = np.arange(start, stop)
+            np.random.seed()
+            center = np.random.choice(options)
 
-            center = np.random.choice(np.arange(start, stop))
             if badge_index < center:
                 badge_index = (self.window_length - (center-badge_index))
             else:
@@ -141,13 +151,13 @@ class StackOverflowDataset(data.Dataset):
             diff = X.size()[0] - center
             output[:self.window_length + diff] = X[center - self.window_length:]
         else:
-            output = X[center - self.window_length:center + self.window_length, :]
+            output = X[center - self.window_length : center + self.window_length, :]
 
         x_in = self.__data_trans_in(output[:self.input_length,:].clone())
         x_out = self.__data_trans_out(output[:,self.out_dim].clone())
 
         # get the proximity to a badge
-        prox_to_badge = self.__get_prox_to_badge(output, badge_index)
+        prox_to_badge = self.__get_prox_to_badge(output, badge_index)[:self.input_length]
 
         # create the kernel that indexes the badge beung accepted at index=2*window_length
         kernel_data = np.arange(0, 4*self.window_length)

@@ -25,7 +25,7 @@ def main(args):
     # Loading Parameters
     params = {'batch_size': 256, 'shuffle': True, 'num_workers': 20}
 
-    max_epochs = 250
+    max_epochs = 1000
     PRINT_NUM = 50
     learning_rate = 1e-3
     weight_decay = 1e-5
@@ -36,6 +36,7 @@ def main(args):
         'badge_focus': 'Electorate',
         'out_dim': 'QuestionVotes',
         'data_path': '../data',
+        # 'input_length': 4*7
     }
 
     dset_train = so_data.StackOverflowDataset(dset_type='train', subsample=4000, centered=False,
@@ -49,21 +50,21 @@ def main(args):
     valid_loader = DataLoader(dset_valid, **params)
 
     model_to_test = {
-        # 'baseline': models.BaselineVAE,
-        # 'linear': models.LinearParametricVAE,
-        # 'personalised_linear': models.LinearParametricPlusSteerParamVAE,
-        # 'full_parameterised': models.FullParameterisedVAE,
-        # 'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
-        'flexible_linear': models.FlexibleLinearParametricVAE,
-        'personalised_flexible_linear': models.FlexibleLinearPlusSteerParamVAE,
+        'baseline': models.BaselineVAE,
+        'linear': models.LinearParametricVAE,
+        'personalised_linear': models.LinearParametricPlusSteerParamVAE,
+        'full_parameterised': models.FullParameterisedVAE,
+        'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
+        # 'flexible_linear': models.FlexibleLinearParametricVAE,
+        # 'personalised_flexible_linear': models.FlexibleLinearPlusSteerParamVAE,
     }
 
     dset_shape = dset_train.data_shape
 
     for name, model_class in model_to_test.items():
 
-        model = model_class(obsdim=dset_shape[0]*dset_shape[1], outdim=dset_shape[0], device=device, proximity_to_badge=True).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        model = model_class(obsdim=dset_shape[0]*dset_shape[1], outdim=window_len*2, device=device, proximity_to_badge=True).to(device)
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         loss = lambda x1,x2,x3,x4: models.BCE_loss_function(x1,x2,x3,x4, data_shape=dset_shape, act_choice=5)
 
         print("Training model for: {}".format(name))
@@ -87,10 +88,18 @@ def train_model(model, train_loader, valid_loader, optimizer, loss_fn, NUM_EPOCH
             # Model computations
             recon_batch, mu, logvar = model(train_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=train_prox)
 
-            loss = loss_fn(recon_batch, train_out, mu, logvar)
+            size = recon_batch.size()
+            index = torch.ones_like(recon_batch)
+            # index[torch.arange(len(recon_batch)), badge_date.long()] = 0
+            # index[torch.arange(len(recon_batch)), (badge_date - 1).long()] = 0
+            # index[torch.arange(len(recon_batch)), ((badge_date + 1)%len(recon_batch[0])).long()] = 0
+            index = (index == 1)
+
+            loss = loss_fn(recon_batch[index].view(size[0], -1), train_out[index].view(size[0], -1), mu, logvar)
             # loss = 100*torch.sum(model.badge_param.pow(2))
             loss.backward()
 
+            # print(model.badge_bump_param.grad)
             optimizer.step()
 
             # model.badge_param.data.clamp_(0)
@@ -102,31 +111,22 @@ def train_model(model, train_loader, valid_loader, optimizer, loss_fn, NUM_EPOCH
 
             train_loss += loss.item()
 
-        # if i%PRINT_NUM==0:
+        if i%PRINT_NUM==0:
 
 
-            # model.eval()
+            model.eval()
+            validation_loss = 0
+            for val_in, kernel_data, val_out, val_prox, badge_date in valid_loader:
+                # Transfer to GPU
+                val_in, kernel_data, val_out, val_prox, badge_date = val_in.to(device), kernel_data.to(device), val_out.to(device), val_prox.to(device), badge_date.to(device)
+                recon_batch, mu, logvar = model(val_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=val_prox)
 
-        validation_loss = 0
-        for val_in, kernel_data, val_out, val_prox, badge_date in valid_loader:
-            # Transfer to GPU
-            val_in, kernel_data, val_out, val_prox, badge_date = val_in.to(device), kernel_data.to(device), val_out.to(device), val_prox.to(device), badge_date.to(device)
+                loss = loss_fn(recon_batch, val_out, mu, logvar)
+                validation_loss += loss.item()
 
-                # Model computations
-                # Model computations
-            recon_batch, mu, logvar = model(val_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=val_prox)
-
-            loss = loss_fn(recon_batch, val_out, mu, logvar)
-            validation_loss += loss.item()
-
-            loss.backward()
-
-            optimizer.step()
-
-        if i % PRINT_NUM == 0:
-            # model.train()
             print('====> Epoch: {} Average Valid loss: {:.4f}'.format(i, validation_loss/len(valid_loader.dataset)))
 
+            model.train()
     return model
 
 
