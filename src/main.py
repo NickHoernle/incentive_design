@@ -50,11 +50,11 @@ def main(args):
     valid_loader = DataLoader(dset_valid, **params)
 
     model_to_test = {
-        # 'baseline': models.BaselineVAE,
-        # 'linear': models.LinearParametricVAE,
-        # 'personalised_linear': models.LinearParametricPlusSteerParamVAE,
-        # 'full_parameterised': models.FullParameterisedVAE,
-        # 'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
+        'baseline': models.BaselineVAE,
+        'linear': models.LinearParametricVAE,
+        'personalised_linear': models.LinearParametricPlusSteerParamVAE,
+        'full_parameterised': models.FullParameterisedVAE,
+        'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
         'full_personalised_parameterised_plus_flow': models.FullParameterisedPlusSteerPlusNormParamVAE
     }
 
@@ -81,10 +81,10 @@ def train_model(model, train_loader, valid_loader, optimizer, scheduler, loss_fn
     for i in tqdm(np.arange(NUM_EPOCHS)):
         model.train()
         train_loss = 0
-        if name == 'full_personalised_parameterised_plus_flow':
-            beta = torch.tensor(1-(NUM_EPOCHS-i)/NUM_EPOCHS).to(device)
-        else:
-            beta = torch.tensor(1).to(device)
+        # if name == 'full_personalised_parameterised_plus_flow':
+        beta = torch.tensor(1-(NUM_EPOCHS-i)/NUM_EPOCHS).to(device)
+        # else:
+        #     beta = torch.tensor(1).float().to(device)
 
         for train_in, kernel_data, train_out, train_prox, badge_date in train_loader:
             optimizer.zero_grad()

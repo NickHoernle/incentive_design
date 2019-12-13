@@ -65,10 +65,7 @@ class BaselineVAE(nn.Module):
         self.encoder_dims = 50
         self.encoder = kwargs.get('encoder', BaselineVAE.default_network(num_in_dim, [200, 400, 200], self.encoder_dims))
         self.mu = nn.Linear(self.encoder_dims, self.latent_dim)
-        self.sigma = nn.Sequential(
-                        nn.Linear(self.encoder_dims, self.latent_dim),
-                        nn.Softplus(),
-                        nn.Hardtanh(min_val=1e-5, max_val=5.))
+        self.log_var = nn.Linear(self.encoder_dims, self.latent_dim)
 
         self.n_out = int(math.ceil(self.out_dim/self.num_prediction_days))
 
@@ -116,7 +113,7 @@ class BaselineVAE(nn.Module):
         else:
             h0 = x
         h = self.encoder(h0)
-        return self.mu(h), self.sigma(h)
+        return self.mu(h), self.log_var(h)
 
     def decode(self, z, **kwargs):
         h = self.decoder(z)
@@ -130,24 +127,26 @@ class BaselineVAE(nn.Module):
         n_batch = x.size(0)
 
         # Retrieve mean and var
-        mu, sigma = z_params
+        mu, log_var = z_params
+
+        sigma = torch.exp(0.5 * log_var)
 
         # Re-parametrize
         q = distrib.Normal(self.zeros, self.ones)
         z = (sigma * q.sample((n_batch,))) + mu
 
         # Compute KL divergence
-        kl_div = -0.5 * torch.sum(1 + sigma.log() - mu.pow(2) - sigma)
+        kl_div = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
         return z, kl_div
 
     def forward(self, x, **kwargs):
-        mu, sigma = self.encode(x.view(-1, self.obs_dim), **kwargs)
-        z, latent_loss = self.latent_loss(x, (mu, sigma))
+        zparams = self.encode(x.view(-1, self.obs_dim), **kwargs)
+        z, latent_loss = self.latent_loss(x, zparams)
         return self.decode(z, kernel=self.kernel(z, x, **kwargs)), latent_loss
 
     def get_z(self, x, **kwargs):
-        mu, sigma = self.encode(x.view(-1, self.obs_dim), **kwargs)
-        z, latent_loss = self.latent_loss(x, (mu, sigma))
+        zparams = self.encode(x.view(-1, self.obs_dim), **kwargs)
+        z, latent_loss = self.latent_loss(x, zparams)
         return z
 
     def kernel(self, z, x, **kwargs):
@@ -203,43 +202,57 @@ class AddNormalizingFlow(AddSteeringParameter):
     def __init__(self, obsdim, outdim, **kwargs):
         super(AddNormalizingFlow, self).__init__(obsdim, outdim, **kwargs)
 
-        block_planar = [PlanarFlow]
-        self.flow = NormalizingFlow(dim=self.latent_dim,
-                                    blocks=block_planar,
-                                    flow_length=12,
-                                    density=distrib.MultivariateNormal(self.zeros, torch.eye(self.latent_dim)))
+        self.K = 12
+        self.flow_params = nn.Linear(self.encoder_dims, self.K*(self.latent_dim*2+1))
+        # block_planar = [PlanarFlow]
+        # self.flow = NormalizingFlow(dim=self.latent_dim,
+        #                             blocks=block_planar,
+        #                             flow_length=12,
+        #                             density=distrib.MultivariateNormal(self.zeros, torch.eye(self.latent_dim)))
+        self.flow = NormalizingFlow(K=self.K, D=self.latent_dim)
+
+    def encode(self, x, **kwargs):
+        if self.proximity_to_badge:
+            h0 = torch.cat((x, kwargs['prox_to_badge']), dim=1)
+        else:
+            h0 = x
+        h = self.encoder(h0)
+        return self.mu(h), self.log_var(h), self.flow_params(h)
 
     def latent_loss(self, x, z_params):
         n_batch = x.size(0)
 
         # Retrieve set of parameters
-        mu, sigma = z_params
+        mu, log_var, flow_params = z_params
 
         # Re-parametrize a Normal distribution
-        q = distrib.Normal(torch.zeros(mu.shape[1]), torch.ones(sigma.shape[1]))
+        q = distrib.Normal(torch.zeros(mu.shape[1]), torch.ones(log_var.shape[1]))
+
+        sigma = torch.exp(0.5 * log_var)
 
         # Obtain our first set of latent points
         z_0 = (sigma * q.sample((n_batch,)).to(self.device)) + mu
 
         # Complexify posterior with flows
-        z_k, list_ladj = self.flow(z_0)
-
-        # ln p(z_k)
-        log_p_zk = -0.5 * z_k * z_k
+        z_k, list_ladj = self.flow(z_0, flow_params.chunk(self.K, dim=1))
 
         # ln q(z_0)
-        log_q_z0 = -0.5 * (sigma.log() + (z_0 - mu) * (z_0 - mu) * sigma.reciprocal())
+        kl_div = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+        # ladj = torch.cat(list_ladj)
+        kl_div -= torch.sum(list_ladj)
+        # ln p(z_k)
+        # log_p_zk = -0.5 * z_k * z_k
+        #
+        # #  ln q(z_0) - ln p(z_k)
+        # logs = (log_q_z0 - log_p_zk).sum()
+        #
+        # # Add log determinants
+        # ladj = torch.cat(list_ladj)
+        #
+        # # ln q(z_0) - ln p(z_k) - sum[log det]
+        # logs -= torch.sum(ladj)
 
-        #  ln q(z_0) - ln p(z_k)
-        logs = (log_q_z0 - log_p_zk).sum()
-
-        # Add log determinants
-        ladj = torch.cat(list_ladj)
-
-        # ln q(z_0) - ln p(z_k) - sum[log det]
-        logs -= torch.sum(ladj)
-
-        return z_k, logs
+        return z_k, kl_div
 
 
 class LinearParametricPlusSteerParamVAE(AddSteeringParameter, LinearParametricVAE):
@@ -346,8 +359,8 @@ class AddSteeringParameterCount(BaselineVAECount, AddSteeringParameter):
         return (torch.sigmoid(prob_of_act), F.softplus(prob_of_act_count))
 
 
-class AddNormalizingFlowCount(AddSteeringParameterCount, AddNormalizingFlow):
-    pass
+# class AddNormalizingFlowCount(AddSteeringParameterCount, AddNormalizingFlow):
+#     pass
 
 
 class LinearParametricVAECount(LinearParametricVAE, BaselineVAECount):
@@ -394,5 +407,5 @@ class FullParameterisedPlusSteerParamVAECount(AddSteeringParameterCount, FullPar
     pass
 
 
-class NormalizingFlowFP_PlusSteer(AddNormalizingFlowCount, FullParameterisedPlusSteerParamVAECount):
+class NormalizingFlowFP_PlusSteer(AddNormalizingFlow, FullParameterisedPlusSteerParamVAECount):
     pass
