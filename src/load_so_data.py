@@ -106,7 +106,7 @@ class StackOverflowDataset(data.Dataset):
         prox_to_badge = 1 - prox_to_badge
         prox_to_badge[badge_index + 1:] = 0
         prox_to_badge[prox_to_badge < 0] = 0
-        prox_to_badge[prox_to_badge > 1] = 0
+        prox_to_badge[prox_to_badge > 1] = 1
         # prox_to_badge = prox_to_badge - prox_to_badge[0]
         # prox_to_badge[badge_index + 1:] = 0
         # prox_to_badge[prox_to_badge < 0] = 0

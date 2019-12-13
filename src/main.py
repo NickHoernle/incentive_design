@@ -25,10 +25,10 @@ def main(args):
     # Loading Parameters
     params = {'batch_size': 256, 'shuffle': True, 'num_workers': 20}
 
-    max_epochs = 1
+    max_epochs = 1000
     PRINT_NUM = 50
     learning_rate = 1e-3
-    weight_decay = 1e-5
+    # weight_decay = 1e-5
     window_len = 5*7
 
     common_params = {
@@ -50,13 +50,12 @@ def main(args):
     valid_loader = DataLoader(dset_valid, **params)
 
     model_to_test = {
-        'baseline': models.BaselineVAE,
-        'linear': models.LinearParametricVAE,
-        'personalised_linear': models.LinearParametricPlusSteerParamVAE,
-        'full_parameterised': models.FullParameterisedVAE,
-        'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
-        # 'flexible_linear': models.FlexibleLinearParametricVAE,
-        # 'personalised_flexible_linear': models.FlexibleLinearPlusSteerParamVAE,
+        # 'baseline': models.BaselineVAE,
+        # 'linear': models.LinearParametricVAE,
+        # 'personalised_linear': models.LinearParametricPlusSteerParamVAE,
+        # 'full_parameterised': models.FullParameterisedVAE,
+        # 'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
+        'full_personalised_parameterised_plus_flow': models.FullParameterisedPlusSteerPlusNormParamVAE
     }
 
     dset_shape = dset_train.data_shape
@@ -64,21 +63,28 @@ def main(args):
     for name, model_class in model_to_test.items():
 
         model = model_class(obsdim=dset_shape[0]*dset_shape[1], outdim=window_len*2, device=device, proximity_to_badge=True).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.9999)
+
         loss = lambda x1,x2,x3: models.BCE_loss_function(x1,x2,x3, data_shape=dset_shape, act_choice=5)
 
         print("Training model for: {}".format(name))
-        model = train_model(model, train_loader, valid_loader, optimizer, loss, NUM_EPOCHS=max_epochs, PRINT_NUM=PRINT_NUM)
+        model = train_model(model, train_loader, valid_loader, optimizer, scheduler, loss,
+                            NUM_EPOCHS=max_epochs, PRINT_NUM=PRINT_NUM, name=name)
 
         print("Done")
         print("Saving model into ../models/{}".format(name))
         torch.save(model.state_dict(), "../models/{}.pt".format(name))
 
-def train_model(model, train_loader, valid_loader, optimizer, loss_fn, NUM_EPOCHS, PRINT_NUM=25):
+def train_model(model, train_loader, valid_loader, optimizer, scheduler, loss_fn, NUM_EPOCHS, PRINT_NUM=25, name=''):
 
     for i in tqdm(np.arange(NUM_EPOCHS)):
         model.train()
         train_loss = 0
+        if name == 'full_personalised_parameterised_plus_flow':
+            beta = torch.tensor(1-(NUM_EPOCHS-i)/NUM_EPOCHS).to(device)
+        else:
+            beta = torch.tensor(1).to(device)
 
         for train_in, kernel_data, train_out, train_prox, badge_date in train_loader:
             optimizer.zero_grad()
@@ -95,19 +101,11 @@ def train_model(model, train_loader, valid_loader, optimizer, loss_fn, NUM_EPOCH
             # index[torch.arange(len(recon_batch)), ((badge_date + 1)%len(recon_batch[0])).long()] = 0
             index = (index == 1)
 
-            loss = loss_fn(recon_batch[index].view(size[0], -1), train_out[index].view(size[0], -1), latent_loss)
-            # loss = 100*torch.sum(model.badge_param.pow(2))
+            loss = loss_fn(recon_batch[index].view(size[0], -1), train_out[index].view(size[0], -1), beta*latent_loss)
             loss.backward()
 
-            # print(model.badge_bump_param.grad)
             optimizer.step()
-
-            # model.badge_param.data.clamp_(0)
-            # print(torch.max(model.badge_param.grad))
-            # for par in model.parameters():
-            #     print(torch.max(par.grad))
-            #     print(torch.max(par))
-            # print()
+            scheduler.step()
 
             train_loss += loss.item()
 
@@ -125,6 +123,7 @@ def train_model(model, train_loader, valid_loader, optimizer, loss_fn, NUM_EPOCH
                 validation_loss += loss.item()
 
             print('====> Epoch: {} Average Valid loss: {:.4f}'.format(i, validation_loss/len(valid_loader.dataset)))
+            torch.save(model.state_dict(), "../models/{}.pt".format(name))
 
             model.train()
     return model

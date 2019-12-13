@@ -5,26 +5,17 @@ import math
 import torch.distributions as distrib
 from torch.distributions import Poisson
 from normalizing_flows import NormalizingFlow
+from normalizing_flows import PlanarFlow
 
 BADGE_THRESHOLD = 500
 poisson_loss = nn.PoissonNLLLoss(reduction='sum', log_input=False)
 
 # Reconstruction + KL divergence losses summed over all elements and batch
 def BCE_loss_function(recon_x, x, KLD, data_shape, act_choice=5):
-
     BCE = F.binary_cross_entropy(recon_x, x, reduction='sum')
-    # BCE = l1_loss(recon_x, outcome)
-
     return BCE + KLD
 
-
-def Poisson_loss_function(recon_x, x, latent_loss, data_shape, act_choice=5):
-
-    BCE = poisson_loss(recon_x, x)
-
-    return BCE + latent_loss
-
-def ZeroInflatedPoisson_loss_function(recon_x, x, mu, logvar, data_shape, act_choice=5):
+def ZeroInflatedPoisson_loss_function(recon_x, x, latent_loss, data_shape, act_choice=5):
 
     x_shape = x.size()
     # if x == 0
@@ -45,9 +36,9 @@ def ZeroInflatedPoisson_loss_function(recon_x, x, mu, logvar, data_shape, act_ch
     log_l = (x==0).float()*torch.logsumexp(zero_inf, dim=2)
     log_l += (x>0).float()*(torch.log(recon_x_0_bin)+poisson_greater0)
 
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    # KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
-    return -torch.sum(log_l) + KLD
+    return -torch.sum(log_l) + latent_loss
 
 
 class BaselineVAE(nn.Module):
@@ -67,85 +58,103 @@ class BaselineVAE(nn.Module):
         self.obs_dim = obsdim
         self.out_dim = outdim
 
+        self.hard_tan = nn.Hardtanh(min_val=1e-5, max_val=15)
+
         # encoder (inference network)
-        n_out = obsdim+(self.obs_dim//7)*self.proximity_to_badge
-        print(n_out)
-        self.encoder1 = nn.Linear(n_out, 400)
-        self.encoder2 = nn.Linear(400, 200)
-        self.encoder3_mu = nn.Linear(200, self.latent_dim)
-        self.encoder3_var = nn.Linear(200, self.latent_dim)
+        num_in_dim = obsdim+(self.obs_dim//7)*self.proximity_to_badge
+        self.encoder_dims = 50
+        self.encoder = kwargs.get('encoder', BaselineVAE.default_network(num_in_dim, [200, 400, 200], self.encoder_dims))
+        self.mu = nn.Linear(self.encoder_dims, self.latent_dim)
+        self.sigma = nn.Sequential(
+                        nn.Linear(self.encoder_dims, self.latent_dim),
+                        nn.Softplus(),
+                        nn.Hardtanh(min_val=1e-5, max_val=5.))
 
         self.n_out = int(math.ceil(self.out_dim/self.num_prediction_days))
 
         # decoder (model network)
-        self.decoder1 = nn.Linear(self.latent_dim, 200)
-        self.decoder2 = nn.Linear(200, 400)
-        self.decoder3 = nn.Linear(400, self.num_prediction_days)
+        self.decoder = kwargs.get('decoder', BaselineVAE.default_network(
+                self.latent_dim, [200, 400, 200], self.num_prediction_days, encoder=False))
 
         # kernel weights
-        ones = torch.ones(self.num_kernel_weights)
-        ones[69:71] = 0
-        self.badge_param = nn.Parameter(ones*torch.randn(self.num_kernel_weights), requires_grad=True)
-        # print(self.badge_param)
+        self.badge_param = nn.Parameter(torch.randn(self.num_kernel_weights), requires_grad=True)
         self.badge_param_bias = nn.Parameter(torch.tensor([0.0,0.0], requires_grad=True).float())
 
         # weights to control for bump
-        self.badge_bump_param = nn.Parameter(torch.tensor([0.0, 0.0], requires_grad=True).float())
+        self.badge_bump_param_ = nn.Parameter(torch.tensor([0.0, 0.0], requires_grad=True).float())
+
+        self.zeros = torch.zeros(self.latent_dim).to(self.device)
+        self.ones = torch.ones(self.latent_dim).to(self.device)
+
+
+    def make_pos(self, input):
+        return self.hard_tan(F.softplus(input))
 
     @property
-    def positive_badge_param(self):
-        return F.softplus(self.badge_param)
+    def badge_bump_param(self):
+        return self.make_pos(self.badge_bump_param_)
 
-    @property
-    def positive_badge_bump_param(self):
-        return F.softplus(self.badge_bump_param)
+    @staticmethod
+    def default_network(in_dim, hidden_dims, out_dim, encoder=True):
+
+        layers = [nn.Linear(in_dim, hidden_dims[0])]
+        layers.append(nn.ReLU(True))
+        for i in range(1, len(hidden_dims)):
+            layers.append(nn.Linear(hidden_dims[i-1], hidden_dims[i]))
+            layers.append(nn.ReLU(True))
+
+        layers.append(nn.Linear(hidden_dims[-1], out_dim))
+
+        if encoder:
+            layers.append(nn.ReLU(True))
+
+        return nn.Sequential(*layers)
 
     def encode(self, x, **kwargs):
         if self.proximity_to_badge:
             h0 = torch.cat((x, kwargs['prox_to_badge']), dim=1)
         else:
             h0 = x
-        h = F.relu(self.encoder1(h0))
-        h1 = F.relu(self.encoder2(h))
-        return self.encoder3_mu(h1), self.encoder3_var(h1)
-
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
+        h = self.encoder(h0)
+        return self.mu(h), self.sigma(h)
 
     def decode(self, z, **kwargs):
-        h = F.relu(self.decoder1(z))
-        h1 = F.relu(self.decoder2(h))
-        prob_of_act = self.decoder3(h1).repeat(1, self.n_out)[:,:self.out_dim]
+        h = self.decoder(z)
+
+        prob_of_act = h.repeat(1, self.n_out)[:,:self.out_dim]
         prob_of_act = prob_of_act + kwargs['kernel']
 
         return torch.sigmoid(prob_of_act)
 
     def latent_loss(self, x, z_params):
         n_batch = x.size(0)
+
         # Retrieve mean and var
         mu, sigma = z_params
+
         # Re-parametrize
-        q = distrib.Normal(torch.zeros(mu.shape[1]), torch.ones(sigma.shape[1]))
+        q = distrib.Normal(self.zeros, self.ones)
         z = (sigma * q.sample((n_batch,))) + mu
+
         # Compute KL divergence
-        kl_div = -0.5 * torch.sum(1 + sigma - mu.pow(2) - sigma.exp())
-        kl_div = kl_div / n_batch
+        kl_div = -0.5 * torch.sum(1 + sigma.log() - mu.pow(2) - sigma)
         return z, kl_div
 
-    # define the encoder and decoder here!
     def forward(self, x, **kwargs):
-        mu, logvar = self.encode(x.view(-1, self.obs_dim), **kwargs)
-        z, latent_loss = self.latent_loss(x, (mu, logvar))
-        # z = self.reparameterize(mu, logvar)
+        mu, sigma = self.encode(x.view(-1, self.obs_dim), **kwargs)
+        z, latent_loss = self.latent_loss(x, (mu, sigma))
         return self.decode(z, kernel=self.kernel(z, x, **kwargs)), latent_loss
+
+    def get_z(self, x, **kwargs):
+        mu, sigma = self.encode(x.view(-1, self.obs_dim), **kwargs)
+        z, latent_loss = self.latent_loss(x, (mu, sigma))
+        return z
 
     def kernel(self, z, x, **kwargs):
         kernel_features = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
 
         kernel_features2 = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
-        kernel_features2[self.out_dim-1:self.out_dim+1] = self.positive_badge_bump_param
+        kernel_features2[self.out_dim-1:self.out_dim+1] = self.badge_bump_param
 
         return kernel_features[kwargs['kernel_data'].long().view(-1,self.out_dim)] + \
                kernel_features2[kwargs['kernel_data'].long().view(-1,self.out_dim)]
@@ -156,14 +165,16 @@ class LinearParametricVAE(BaselineVAE):
         super(LinearParametricVAE, self).__init__(obsdim, outdim, num_kernel_weights=2, **kwargs)
 
     def kernel(self, z, x, **kwargs):
+
         kernel_features = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
         kernel_features[self.out_dim + 1:] = -torch.arange(1, self.out_dim).float() / (self.out_dim)
         kernel_features[:self.out_dim + 1] = torch.arange(1, self.out_dim + 2).float() / (self.out_dim + 2)
-        kernel_features[self.out_dim + 1:] *= self.positive_badge_param[0]
-        kernel_features[:self.out_dim + 1] *= self.positive_badge_param[1]
+        kernel_features[self.out_dim + 1:] *= self.make_pos(self.badge_param[0])
+        kernel_features[:self.out_dim + 1] *= self.make_pos(self.badge_param[1])
 
+        # badge bump
         kernel_features2 = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
-        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.positive_badge_bump_param - \
+        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.badge_bump_param - \
                                                               kernel_features[self.out_dim - 1:self.out_dim + 1]
 
         return kernel_features[kwargs['kernel_data'].long().view(-1, self.out_dim)] + \
@@ -173,19 +184,62 @@ class LinearParametricVAE(BaselineVAE):
 class AddSteeringParameter(BaselineVAE):
     def __init__(self, obsdim, outdim, **kwargs):
         super(AddSteeringParameter, self).__init__(obsdim, outdim, **kwargs)
-        self.decoder1 = nn.Linear(self.latent_dim-1, 200)
-        self.steer_weight = nn.Parameter(torch.randn(1).float(), requires_grad=True)
+        self.decoder = kwargs.get('decoder', BaselineVAE.default_network(self.latent_dim-1, [200, 400, 200],
+                                                                         self.num_prediction_days, encoder=False))
+        self.steer_weight_ = nn.Parameter(torch.randn(1).float(), requires_grad=True)
 
     @property
-    def positive_steer_weight(self):
-        return F.softplus(self.steer_weight)
+    def steer_weight(self):
+        return self.make_pos(self.steer_weight_)
 
     def decode(self, z, **kwargs):
-        h = F.relu(self.decoder1(z[:,:self.latent_dim-1]))
-        h1 = F.relu(self.decoder2(h))
-        prob_of_act = self.decoder3(h1).repeat(1, self.n_out)[:, :self.out_dim]
-        prob_of_act = prob_of_act + torch.sigmoid(self.positive_steer_weight*z[:,-1].view(-1,1))*kwargs['kernel']
+        h = self.decoder(z[:,:self.latent_dim-1])
+        prob_of_act = h.repeat(1, self.n_out)[:, :self.out_dim]
+        prob_of_act = prob_of_act + torch.sigmoid(self.steer_weight*z[:,-1].view(-1,1))*kwargs['kernel']
         return torch.sigmoid(prob_of_act)
+
+
+class AddNormalizingFlow(AddSteeringParameter):
+    def __init__(self, obsdim, outdim, **kwargs):
+        super(AddNormalizingFlow, self).__init__(obsdim, outdim, **kwargs)
+
+        block_planar = [PlanarFlow]
+        self.flow = NormalizingFlow(dim=self.latent_dim,
+                                    blocks=block_planar,
+                                    flow_length=12,
+                                    density=distrib.MultivariateNormal(self.zeros, torch.eye(self.latent_dim)))
+
+    def latent_loss(self, x, z_params):
+        n_batch = x.size(0)
+
+        # Retrieve set of parameters
+        mu, sigma = z_params
+
+        # Re-parametrize a Normal distribution
+        q = distrib.Normal(torch.zeros(mu.shape[1]), torch.ones(sigma.shape[1]))
+
+        # Obtain our first set of latent points
+        z_0 = (sigma * q.sample((n_batch,)).to(self.device)) + mu
+
+        # Complexify posterior with flows
+        z_k, list_ladj = self.flow(z_0)
+
+        # ln p(z_k)
+        log_p_zk = -0.5 * z_k * z_k
+
+        # ln q(z_0)
+        log_q_z0 = -0.5 * (sigma.log() + (z_0 - mu) * (z_0 - mu) * sigma.reciprocal())
+
+        #  ln q(z_0) - ln p(z_k)
+        logs = (log_q_z0 - log_p_zk).sum()
+
+        # Add log determinants
+        ladj = torch.cat(list_ladj)
+
+        # ln q(z_0) - ln p(z_k) - sum[log det]
+        logs -= torch.sum(ladj)
+
+        return z_k, logs
 
 
 class LinearParametricPlusSteerParamVAE(AddSteeringParameter, LinearParametricVAE):
@@ -200,11 +254,11 @@ class FullParameterisedVAE(BaselineVAE):
     def kernel(self, z, x, **kwargs):
 
         kernel_features = torch.ones(size=(2 * self.out_dim,)).float().to(self.device)
-        kernel_features[:self.out_dim + 1] = F.softplus(self.badge_param_bias[0]+self.badge_param[:self.out_dim + 1])
-        kernel_features[self.out_dim + 1:] = -F.softplus(self.badge_param_bias[1]+self.badge_param[self.out_dim + 1:])
+        kernel_features[:self.out_dim + 1] =  self.make_pos(self.badge_param_bias[0] + self.badge_param[:self.out_dim + 1])
+        kernel_features[self.out_dim + 1:] = -self.make_pos(self.badge_param_bias[1] + self.badge_param[self.out_dim + 1:])
 
         kernel_features2 = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
-        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.positive_badge_bump_param
+        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.badge_bump_param
 
         to_return = kernel_features[kwargs['kernel_data'].long().view(-1, self.out_dim)] + \
                kernel_features2[kwargs['kernel_data'].long().view(-1, self.out_dim)]
@@ -215,30 +269,9 @@ class FullParameterisedPlusSteerParamVAE(AddSteeringParameter, FullParameterised
     def __init__(self, obsdim, outdim, **kwargs):
         super(FullParameterisedPlusSteerParamVAE, self).__init__(obsdim, outdim, **kwargs)
 
-class FlexibleLinearParametricVAE(BaselineVAE):
+class FullParameterisedPlusSteerPlusNormParamVAE(AddNormalizingFlow, FullParameterisedPlusSteerParamVAE):
     def __init__(self, obsdim, outdim, **kwargs):
-        super(FlexibleLinearParametricVAE, self).__init__(obsdim, outdim, num_kernel_weights=4, **kwargs)
-        # initialise away from 0
-        self.badge_param = nn.Parameter(torch.tensor([-5.0,-0.0,-5.0,-0.0,0.0,0.0], requires_grad=True).float())
-
-    def kernel(self, z, x, **kwargs):
-        kernel_features = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
-
-        kernel_features[:self.out_dim+1] = F.softplus(
-            self.badge_param[0]*self.positive_badge_param[4]+self.positive_badge_param[1] * torch.arange(0, self.out_dim+1).float().to(self.device))
-        kernel_features[self.out_dim + 1:] = -F.softplus(
-            self.badge_param[2]*self.positive_badge_param[5]+self.positive_badge_param[3] * torch.arange(0, self.out_dim-1).float().to(self.device))
-
-        kernel_features2 = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
-        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.positive_badge_bump_param
-
-        return kernel_features[kwargs['kernel_data'].long().view(-1, self.out_dim)] + \
-               kernel_features2[kwargs['kernel_data'].long().view(-1, self.out_dim)]
-#
-#
-class FlexibleLinearPlusSteerParamVAE(AddSteeringParameter, FlexibleLinearParametricVAE):
-    def __init__(self, obsdim, outdim, **kwargs):
-        super(FlexibleLinearPlusSteerParamVAE, self).__init__(obsdim, outdim, **kwargs)
+        super(FullParameterisedPlusSteerPlusNormParamVAE, self).__init__(obsdim, outdim, **kwargs)
 
 
 
@@ -251,77 +284,70 @@ class BaselineVAECount(BaselineVAE):
         super(BaselineVAECount, self).__init__(obsdim, outdim, **kwargs)
 
         # decoder (model network)
-        self.decoder_count1 = nn.Linear(self.latent_dim, 200)
-        self.decoder_count2 = nn.Linear(200, 400)
-        self.decoder_count3 = nn.Linear(400, self.num_prediction_days)
+        self.decoder_count = kwargs.get('decoder', BaselineVAE.default_network(self.latent_dim, [200, 400, 200],
+                                                                         self.num_prediction_days, encoder=False))
 
         # kernel weights
         self.badge_param_count = nn.Parameter(torch.randn(self.num_kernel_weights, requires_grad=True).float())
-
         self.badge_param_bias_count = nn.Parameter(torch.tensor([0.0, 0.0], requires_grad=True).float())
 
         # weights to control for bump
-        self.badge_bump_param_count = nn.Parameter(torch.tensor([0.0, 0.0], requires_grad=True).float())
-
-
-    @property
-    def positive_badge_count_param(self):
-        return F.softplus(self.badge_param_count)
+        self.badge_bump_param_count_ = nn.Parameter(torch.tensor([0.0, 0.0], requires_grad=True).float())
 
     @property
-    def positive_badge_bump_param_count(self):
-        return F.softplus(self.badge_bump_param_count)
+    def badge_bump_param_count(self):
+        return self.make_pos(self.badge_bump_param_count_)
 
     def decode(self, z, **kwargs):
-        h = F.relu(self.decoder1(z))
-        h1 = F.relu(self.decoder2(h))
-        prob_of_act = self.decoder3(h1).repeat(1, self.n_out)[:,:self.out_dim]
+        h = self.decoder(z)
+        prob_of_act = h.repeat(1, self.n_out)[:,:self.out_dim]
         prob_of_act = prob_of_act + kwargs['kernel']
 
-        hc = F.relu(self.decoder_count1(z))
-        h1c = F.relu(self.decoder_count2(hc))
-        prob_of_act_count = self.decoder_count3(h1c).repeat(1, self.n_out)[:, :self.out_dim]
+        hc = self.decoder_count(z)
+        prob_of_act_count = hc.repeat(1, self.n_out)[:, :self.out_dim]
         prob_of_act_count = prob_of_act_count + kwargs['kernel_count']
 
         return (torch.sigmoid(prob_of_act), F.softplus(prob_of_act_count))
 
     def forward(self, x, **kwargs):
-        mu, logvar = self.encode(x.view(-1, self.obs_dim), **kwargs)
-        z = self.reparameterize(mu, logvar)
-        return self.decode(z, kernel=self.kernel(z, x, **kwargs), kernel_count=self.kernel_count(z, x, **kwargs)), mu, logvar
+        # same encoder that was used before
+        z_params = self.encode(x.view(-1, self.obs_dim), **kwargs)
+        z, latent_loss = self.latent_loss(x, z_params)
+        return self.decode(z, kernel=self.kernel(z, x, **kwargs), kernel_count=self.kernel_count(z, x, **kwargs)), latent_loss
 
     def kernel_count(self, z, x, **kwargs):
         kernel_features = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
 
         kernel_features2 = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
-        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.positive_badge_bump_param_count
+        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.badge_bump_param_count
 
         return kernel_features[kwargs['kernel_data'].long().view(-1, self.out_dim)] + \
                kernel_features2[kwargs['kernel_data'].long().view(-1, self.out_dim)]
 
-class AddSteeringParameterCount(BaselineVAECount):
+class AddSteeringParameterCount(BaselineVAECount, AddSteeringParameter):
     def __init__(self, obsdim, outdim, **kwargs):
         super(AddSteeringParameterCount, self).__init__(obsdim, outdim, **kwargs)
-        self.decoder1 = nn.Linear(self.latent_dim-2, 200)
-        self.decoder_count1 = nn.Linear(self.latent_dim-2, 200)
-        self.steer_weight = nn.Parameter(torch.randn(2).float(), requires_grad=True)
 
-    @property
-    def positive_steer_weight(self):
-        return F.softplus(self.steer_weight)
+        self.steer_weight_ = nn.Parameter(torch.randn(2).float(), requires_grad=True)
+        self.decoder = AddSteeringParameterCount.default_network(self.latent_dim-2, [200, 400, 200],
+                                                                         self.num_prediction_days, encoder=False)
+        self.decoder_count = AddSteeringParameterCount.default_network(self.latent_dim-2, [200, 400, 200],
+                                                                         self.num_prediction_days, encoder=False)
 
     def decode(self, z, **kwargs):
-        h = F.relu(self.decoder1(z[:,:self.latent_dim-2]))
-        h1 = F.relu(self.decoder2(h))
-        prob_of_act = self.decoder3(h1).repeat(1, self.n_out)[:,:self.out_dim]
-        prob_of_act = prob_of_act + torch.sigmoid(self.positive_steer_weight[0]*z[:,-1].view(-1,1))*kwargs['kernel']
+        h = self.decoder(z[:, :self.latent_dim - 2])
+        prob_of_act = h.repeat(1, self.n_out)[:, :self.out_dim]
+        prob_of_act = prob_of_act + torch.sigmoid(self.steer_weight[0] * z[:, -1].view(-1, 1)) * kwargs['kernel']
 
-        hc = F.relu(self.decoder_count1(z[:,:self.latent_dim-2]))
-        h1c = F.relu(self.decoder_count2(hc))
-        prob_of_act_count = self.decoder_count3(h1c).repeat(1, self.n_out)[:, :self.out_dim]
-        prob_of_act_count = prob_of_act_count + torch.sigmoid(self.positive_steer_weight[1]*z[:,-2].view(-1,1))*kwargs['kernel_count']
+        hc = self.decoder_count(z[:, :self.latent_dim - 2])
+        prob_of_act_count = hc.repeat(1, self.n_out)[:, :self.out_dim]
+        prob_of_act_count = prob_of_act_count + torch.sigmoid(self.steer_weight[1] * z[:, -2].view(-1, 1)) * kwargs['kernel_count']
 
         return (torch.sigmoid(prob_of_act), F.softplus(prob_of_act_count))
+
+
+class AddNormalizingFlowCount(AddSteeringParameterCount, AddNormalizingFlow):
+    pass
 
 
 class LinearParametricVAECount(LinearParametricVAE, BaselineVAECount):
@@ -329,11 +355,11 @@ class LinearParametricVAECount(LinearParametricVAE, BaselineVAECount):
         kernel_features = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
         kernel_features[self.out_dim + 1:] = -torch.arange(1, self.out_dim).float() / (self.out_dim)
         kernel_features[:self.out_dim + 1] = torch.arange(1, self.out_dim + 2).float() / (self.out_dim + 2)
-        kernel_features[self.out_dim + 1:] *= self.positive_badge_count_param[0]
-        kernel_features[:self.out_dim + 1] *= self.positive_badge_count_param[1]
+        kernel_features[self.out_dim + 1:] *= self.make_pos(self.badge_param_count[0])
+        kernel_features[:self.out_dim + 1] *= self.make_pos(self.badge_param_count[1])
 
         kernel_features2 = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
-        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.positive_badge_bump_param_count - \
+        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.badge_bump_param_count - \
                                                               kernel_features[self.out_dim - 1:self.out_dim + 1]
 
         return kernel_features[kwargs['kernel_data'].long().view(-1, self.out_dim)] + \
@@ -341,8 +367,7 @@ class LinearParametricVAECount(LinearParametricVAE, BaselineVAECount):
 
 
 class LinearParametricPlusSteerParamVAECount(AddSteeringParameterCount, LinearParametricVAECount):
-    def __init__(self, obsdim, outdim, **kwargs):
-        super(LinearParametricPlusSteerParamVAECount, self).__init__(obsdim, outdim, **kwargs)
+    pass
 
 
 class FullParameterisedVAECount(FullParameterisedVAE, BaselineVAECount):
@@ -353,16 +378,21 @@ class FullParameterisedVAECount(FullParameterisedVAE, BaselineVAECount):
 
         kernel_features = torch.ones(size=(2 * self.out_dim,)).float().to(self.device)
 
-        kernel_features[:self.out_dim + 1] = F.softplus(self.badge_param_bias_count[0] + self.badge_param_count[:self.out_dim + 1])
-        kernel_features[self.out_dim + 1:] = -F.softplus(self.badge_param_bias_count[1] + self.badge_param_count[self.out_dim + 1:])
+        kernel_features[:self.out_dim + 1] = self.make_pos(
+            self.badge_param_bias_count[0] + self.badge_param_count[:self.out_dim + 1])
+        kernel_features[self.out_dim + 1:] = -self.make_pos(
+            self.badge_param_bias_count[1] + self.badge_param_count[self.out_dim + 1:])
 
         kernel_features2 = torch.zeros(size=(2 * self.out_dim,)).float().to(self.device)
-        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.positive_badge_bump_param_count - \
+        kernel_features2[self.out_dim - 1:self.out_dim + 1] = self.badge_bump_param_count - \
                                                               kernel_features[self.out_dim - 1:self.out_dim + 1]
         return kernel_features[kwargs['kernel_data'].long().view(-1, self.out_dim)] + \
                kernel_features2[kwargs['kernel_data'].long().view(-1, self.out_dim)]
 
 
 class FullParameterisedPlusSteerParamVAECount(AddSteeringParameterCount, FullParameterisedVAECount):
-    def __init__(self, obsdim, outdim, **kwargs):
-        super(FullParameterisedPlusSteerParamVAECount, self).__init__(obsdim, outdim, **kwargs)
+    pass
+
+
+class NormalizingFlowFP_PlusSteer(AddNormalizingFlowCount, FullParameterisedPlusSteerParamVAECount):
+    pass
