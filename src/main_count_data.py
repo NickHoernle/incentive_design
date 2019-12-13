@@ -51,12 +51,12 @@ def main(args):
     valid_loader = DataLoader(dset_valid, **params)
 
     model_to_test = {
-        'baseline_count': models.BaselineVAECount,
+        # 'baseline_count': models.BaselineVAECount,
         'linear_count': models.LinearParametricVAECount,
         'personalised_linear_count': models.LinearParametricPlusSteerParamVAECount,
-        'full_parameterised_count': models.FullParameterisedVAECount,
+        # 'full_parameterised_count': models.FullParameterisedVAECount,
         'full_personalised_parameterised_count': models.FullParameterisedPlusSteerParamVAECount,
-        'full_personalised_normalizing_flow': models.NormalizingFlowFP_PlusSteer
+        # 'full_personalised_normalizing_flow': models.NormalizingFlowFP_PlusSteer
     }
 
     dset_shape = dset_train.data_shape
@@ -85,10 +85,10 @@ def train_model(model, train_loader, valid_loader, optimizer, scheduler, loss_fn
         model.train()
         train_loss = 0
 
-        if name == 'full_personalised_normalizing_flow':
-            beta = torch.tensor(1. * (i / float(NUM_EPOCHS))).float().to(model.device)
-        else:
-            beta = 1
+        # if name == 'full_personalised_normalizing_flow':
+        beta = torch.tensor(1. * (i / float(NUM_EPOCHS))).float().to(model.device)
+        # else:
+        # beta = 1
 
         for train_in, kernel_data, train_out, train_prox, badge_date in train_loader:
 

@@ -50,12 +50,12 @@ def main(args):
     valid_loader = DataLoader(dset_valid, **params)
 
     model_to_test = {
-        'baseline': models.BaselineVAE,
-        'linear': models.LinearParametricVAE,
-        'personalised_linear': models.LinearParametricPlusSteerParamVAE,
-        'full_parameterised': models.FullParameterisedVAE,
-        'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
-        'full_personalised_parameterised_plus_flow': models.FullParameterisedPlusSteerPlusNormParamVAE
+        # 'baseline': models.BaselineVAE,
+        # 'linear': models.LinearParametricVAE,
+        # 'personalised_linear': models.LinearParametricPlusSteerParamVAE,
+        # 'full_parameterised': models.FullParameterisedVAE,
+        # 'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
+        # 'full_personalised_parameterised_plus_flow': models.FullParameterisedPlusSteerPlusNormParamVAE
     }
 
     dset_shape = dset_train.data_shape

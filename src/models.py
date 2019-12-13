@@ -29,12 +29,12 @@ def ZeroInflatedPoisson_loss_function(recon_x, x, latent_loss, data_shape, act_c
     poisson_greater0 = (x>0).float()*Poisson(recon_x_greater0_count).log_prob(x)
 
     zero_inf = torch.cat((
-        torch.log(1-recon_x_0_bin).view(x_shape[0], x_shape[1], -1),
+        torch.log((1-recon_x_0_bin)+1e-9).view(x_shape[0], x_shape[1], -1),
         poisson_0.view(x_shape[0], x_shape[1], -1)
     ), dim=2)
 
     log_l = (x==0).float()*torch.logsumexp(zero_inf, dim=2)
-    log_l += (x>0).float()*(torch.log(recon_x_0_bin)+poisson_greater0)
+    log_l += (x>0).float()*(torch.log(recon_x_0_bin+1e-9)+poisson_greater0)
 
     # KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
