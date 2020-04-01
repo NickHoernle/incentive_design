@@ -34,32 +34,25 @@ from torch.utils import data
 
 class StackOverflowDataset(data.Dataset):
 
-    def __init__(self, data_path='../data', dset_type='train', badge_focus='Electorate', subsample=5000, centered=True, window_length=70, input_length='full', out_dim=None):
-        '''
-        Initialise the stack overflow data loader
-        :param list_IDs: list of ids that belong to this dataset
-        :param badge_ids: dictionary of badges achieved
-        :param badge_focus: focus on a particular badge
-        :param subsample: subsample the data to smaller fraction
-        :param centered: to center the time series around the badge achievement
-        :param window_length: length of window around badge point
-        :param dset_type: can be "train", "test", "validate"
-        :param input_length: 'full' or length specifying the length of the original time series to use in the
-                             inference network (encoding) step
-        :param out_dim: dimension of the output to use, if None return the whole array, if string then return the
-                        string must be a specific action type.
-        '''
+    def __init__(self, data_path='../data', dset_type='train',
+                 badge_focus='Electorate', badges_to_avoid=[], subsample=5000,
+                 centered=True, window_length=70,
+                 input_length='full', out_dim=None, return_user_id=False, badge_threshold=600):
 
         with open("{}/badge_achievements.json".format(data_path), 'r') as f:
             badge_ids = json.load(f)
         with open("{}/data_indexes.json".format(data_path), 'r') as f:
             list_IDs = json.load(f)
+
         self.badge_focus = badge_focus
         self.subsample = subsample
         self.centered = centered
         self.window_length = window_length
         self.dset_type = dset_type
         self.data_path = data_path
+        self.return_user_id = return_user_id
+        self.badge_threshold = badge_threshold
+        self.badges_to_avoid = badges_to_avoid
 
         if input_length == 'full':
             self.input_length = self.window_length * 2
@@ -70,8 +63,8 @@ class StackOverflowDataset(data.Dataset):
             self.out_dim = [0,1,2,3,4,5,6]
         elif type(out_dim) == str:
             self.out_dim = action_ixs[out_dim]
-        else:
-            self.out_dim = out_dim
+        elif type(out_dim) == list:
+            self.out_dim = [action_ixs[elem] for elem in out_dim]
 
         self.list_IDs, self.badge_ids = self._preprocess_user_ids(list_IDs[dset_type], badge_ids)
         self.data_shape = (self.input_length, len(ACTIONS))
@@ -79,13 +72,24 @@ class StackOverflowDataset(data.Dataset):
     def _preprocess_user_ids(self, list_IDs, badge_ids):
         feasible_users = []
         feasible_badges = {}
+
         for user in list_IDs:
             user = str(user)
             if self.badge_focus in badge_ids[user]:
-                feasible_users.append(user)
-                feasible_badges[user] = int(np.random.choice(badge_ids[user][self.badge_focus], size=1))
+                valid = True
 
-        assert len(feasible_users) >= self.subsample
+                for badge in self.badges_to_avoid:
+                    if badge in badge_ids[user]:
+                        valid = False
+                        break
+
+                if valid:
+                    feasible_users.append(user)
+                    feasible_badges[user] = int(np.random.choice(badge_ids[user][self.badge_focus], size=1))
+
+        if len(feasible_users) < self.subsample:
+            self.subsample = len(feasible_users)
+
         return np.random.choice(feasible_users, size=self.subsample, replace=False), feasible_badges
 
     def __data_trans_in(self, data):
@@ -100,8 +104,11 @@ class StackOverflowDataset(data.Dataset):
         return len(self.list_IDs)
 
     def __get_prox_to_badge(self, output, badge_index):
-        prox_to_badge = torch.cumsum(output[:, self.out_dim], dim=0).float()
-        prox_to_badge = (prox_to_badge + (500 - prox_to_badge[badge_index])) / 500
+        if type(self.out_dim) == list:
+            prox_to_badge = torch.cumsum(output[:, self.out_dim].sum(dim=-1), dim=0).float()
+        else:
+            prox_to_badge = torch.cumsum(output[:, self.out_dim], dim=0).float()
+        prox_to_badge = (prox_to_badge + (self.badge_threshold - prox_to_badge[badge_index])) / self.badge_threshold
 
         prox_to_badge = 1 - prox_to_badge
         prox_to_badge[badge_index + 1:] = 0
@@ -154,7 +161,10 @@ class StackOverflowDataset(data.Dataset):
             output = X[center - self.window_length : center + self.window_length, :]
 
         x_in = self.__data_trans_in(output[:self.input_length,:].clone())
-        x_out = self.__data_trans_out(output[:,self.out_dim].clone())
+        if type(self.out_dim) == list:
+            x_out = self.__data_trans_out(output[:, self.out_dim].sum(dim=-1).clone())
+        else:
+            x_out = self.__data_trans_out(output[:,self.out_dim].clone())
 
         # get the proximity to a badge
         prox_to_badge = self.__get_prox_to_badge(output, badge_index)[:self.input_length]
@@ -164,6 +174,15 @@ class StackOverflowDataset(data.Dataset):
 
         start = 2*self.window_length-badge_index
         stop = 4*self.window_length-badge_index
+
+        if self.return_user_id:
+            return (torch.tensor(x_in).float(),
+                    torch.tensor(kernel_data[start: stop]).view(-1).float(),
+                    torch.tensor(x_out).float(),
+                    prox_to_badge.view(-1, ).float(),
+                    torch.tensor(badge_index, dtype=torch.float),
+                    ID
+                    )
 
         return (torch.tensor(x_in).float(),
                 torch.tensor(kernel_data[start: stop]).view(-1).float(),
@@ -179,9 +198,9 @@ class IdentityScaler:
 
 class StackOverflowDatasetIncCounts(StackOverflowDataset):
     def __init__(self, data_path='../data', dset_type='train', badge_focus='Electorate', subsample=5000, centered=True,
-                 window_length=70, input_length='full', out_dim=None, scaler_in=IdentityScaler(), scaler_out=IdentityScaler(), self_initialise=False):
+                 window_length=70, input_length='full', out_dim=None, scaler_in=IdentityScaler(), scaler_out=IdentityScaler(), self_initialise=False, return_user_id=False, **kwargs):
         super(StackOverflowDatasetIncCounts, self).__init__(data_path=data_path, dset_type=dset_type, badge_focus=badge_focus, subsample=subsample,
-                         centered=centered, window_length=window_length, input_length=input_length, out_dim=out_dim)
+                         centered=centered, window_length=window_length, input_length=input_length, out_dim=out_dim, return_user_id=return_user_id, **kwargs)
 
         self.scaler_in = scaler_in
         self.scaler_out = scaler_out
@@ -190,7 +209,7 @@ class StackOverflowDatasetIncCounts(StackOverflowDataset):
             self.scaler_in, self.scaler_out = calculate_feature_transformation(self)
 
     def _StackOverflowDataset__data_trans_in(self, data):
-        mid = torch.log1p(data.float().view(-1, self.data_shape[0]*self.data_shape[1])).numpy()
+        mid = (data.float().view(-1, self.data_shape[0]*self.data_shape[1])).numpy()
         return self.scaler_in.transform(mid).reshape(self.data_shape[0], self.data_shape[1])
 
     def _StackOverflowDataset__data_trans_out(self, data):
@@ -201,7 +220,7 @@ class StackOverflowDatasetIncCounts(StackOverflowDataset):
         return self.scaler_in, self.scaler_out
 
     def inverse_transform_in(self, data):
-        return torch.exp(self.scaler_in.inverse_transform(data.float))-1
+        return self.scaler_in.inverse_transform(data)
 
     def inverse_transform_out(self, data):
         return data.float
@@ -211,22 +230,61 @@ def calculate_feature_transformation(train_dataset):
 
     print("Processing training data")
     for i in tqdm(range(len(train_dataset))):
-        in_d, kern, out_d, _, _ = train_dataset.__getitem__(i)
+        resp = train_dataset.__getitem__(i)
+        in_d = resp[0]
+        out_d = resp[2]
+
         dat_in.append(in_d.numpy())
         dat_out.append(out_d.numpy())
 
     dat_in = np.array(dat_in)
-    dat_out = np.array(dat_out)
+    maxes_in = {}
+    for i, action in enumerate(ACTIONS):
+        maxes_in[action] = np.max(dat_in[:,:,i])
+        dat_in[:, :, i] = dat_in[:,:,i]/maxes_in[action]
 
-    dset_shape = dat_in.shape
-    dat_in = dat_in.reshape(-1, dset_shape[1] * dset_shape[2])
-    dat_out = dat_out.reshape(-1, dset_shape[1])
+    maxes_out = np.max(dat_out)
+    dat_out = dat_out / maxes_out
 
-    scaler_in = MinMaxScaler(feature_range=(-1, 1))
-    scaler_out = MinMaxScaler(feature_range=(0, 1))
+    class ScalerIn(IdentityScaler):
+        def __init__(self, maxes_in):
+            self.maxes_in = maxes_in
 
-    scaler_in.fit(dat_in)
-    scaler_out.fit(dat_out)
+        def transform(self, x):
+            if len(x.shape) == 2:
+                x = x.reshape(1,-1,len(ACTIONS))
+            for i,a in enumerate(ACTIONS):
+                x[:, :, i] = x[:, :, i] / self.maxes_in[a]
+            return x
+
+        def inverse_transform(self, x):
+            if len(x.shape) == 2:
+                x = x.reshape(1,-1,len(ACTIONS))
+            for i,a in enumerate(ACTIONS):
+                x[:, :, i] = x[:, :, i] * self.maxes_in[a]
+            return x
+
+    class ScalerOut(IdentityScaler):
+        def __init__(self, maxes_in):
+            self.maxes_in = maxes_in
+        def transform(self, x):
+            return x/self.maxes_in
+
+        def inverse_transform(self, x):
+            return x*self.maxes_in
+
+    scaler_in = ScalerIn(maxes_in)
+    scaler_out = ScalerOut(maxes_out)
+    # dat_out = np.array(dat_out)
+
+    # dset_shape = dat_in.shape
+    # dat_in = dat_in.reshape(-1, dset_shape[1] * dset_shape[2])
+
+    # scaler_in = MinMaxScaler(feature_range=(-1, 1))
+    # scaler_out = MinMaxScaler(feature_range=(0, 1))
+
+    # scaler_in.fit(dat_in)
+    # scaler_out.fit(dat_out)
 
     return scaler_in, scaler_out
 
