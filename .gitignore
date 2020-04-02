@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 
 data/*.pt
+data/*/*.pt
+data/*/*.json
+data/*/*.csv
 data/*.json
 data/*.csv
 models/*.pt
