@@ -92,7 +92,7 @@ def main(args):
             'window_length': args.window_length,
             'badge_focus': 'strunk_white',
             'out_dim': 0,
-            'data_path': '../data/editor',
+            'data_path': args.data,
             'badge_threshold': 80,
             'badges_to_avoid': [],
             'ACTIONS': [0]
@@ -129,7 +129,7 @@ def main(args):
 
     model_name = 'strunk_white_' + args.model_name + "_" + model_name + '.pt'
 
-    PATH_TO_MODEL = '../models/'+model_name
+    PATH_TO_MODEL = args.output+'/models/'+model_name
 
     if os.path.exists(PATH_TO_MODEL):
         model.load_state_dict(torch.load(PATH_TO_MODEL, map_location=device))

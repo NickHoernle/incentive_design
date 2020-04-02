@@ -7,7 +7,6 @@ import pickle
 
 import torch
 import numpy as np
-import pandas as pd
 import json
 
 from tqdm import tqdm
@@ -329,6 +328,8 @@ def calculate_feature_transformation(train_dataset):
 ######################################################################################################################
 
 def process_data(base_path):
+    import pandas as pd
+
     # processed_dataset = {}
     # validation == 1000 samples
     # train === 5000 samples
@@ -556,6 +557,7 @@ def transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to
 
 
 if __name__ == '__main__':
+    import pandas as pd
 
     #### BUILD THE INPUT FILE ####
     # input_a_fs = ['../data/editor/actions-2015-06.csv', '../data/editor/actions-2016-12.csv']
