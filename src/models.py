@@ -15,7 +15,7 @@ def BCE_loss_function(recon_x, x, KLD, data_shape, act_choice=5):
     BCE = F.binary_cross_entropy(recon_x, x, reduction='sum')
     return BCE + KLD
 
-def ZeroInflatedPoisson_loss_function(recon_x, x, latent_loss, data_shape, act_choice=5):
+def ZeroInflatedPoisson_loss_function(recon_x, x, latent_loss, data_shape=None, act_choice=5):
 
     x_shape = x.size()
     # if x == 0
@@ -62,7 +62,8 @@ class BaselineVAE(nn.Module):
         self.hard_tan = nn.Hardtanh(min_val=1e-5, max_val=15)
 
         # encoder (inference network)
-        num_in_dim = obsdim+(self.obs_dim//7)*self.proximity_to_badge
+        num_in_dim = obsdim+(self.out_dim)*self.proximity_to_badge
+
         self.encoder_dims = 50
         self.encoder = kwargs.get('encoder', BaselineVAE.default_network(num_in_dim, [200, 400, 200], self.encoder_dims))
         self.mu = nn.Linear(self.encoder_dims, self.latent_dim)
