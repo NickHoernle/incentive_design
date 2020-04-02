@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import os
 from collections import namedtuple
 from urllib.request import urlopen
@@ -37,7 +39,9 @@ class StackOverflowDataset(data.Dataset):
     def __init__(self, data_path='../data', dset_type='train',
                  badge_focus='Electorate', badges_to_avoid=[], subsample=5000,
                  centered=True, window_length=70,
-                 input_length='full', out_dim=None, return_user_id=False, badge_threshold=600):
+                 input_length='full', out_dim=None,
+                 return_user_id=False,
+                 badge_threshold=600, ACTIONS=ACTIONS):
 
         with open("{}/badge_achievements.json".format(data_path), 'r') as f:
             badge_ids = json.load(f)
@@ -53,6 +57,7 @@ class StackOverflowDataset(data.Dataset):
         self.return_user_id = return_user_id
         self.badge_threshold = badge_threshold
         self.badges_to_avoid = badges_to_avoid
+        self.ACTIONS = ACTIONS
 
         if input_length == 'full':
             self.input_length = self.window_length * 2
@@ -65,6 +70,8 @@ class StackOverflowDataset(data.Dataset):
             self.out_dim = action_ixs[out_dim]
         elif type(out_dim) == list:
             self.out_dim = [action_ixs[elem] for elem in out_dim]
+        elif type(out_dim) == int:
+            self.out_dim = out_dim
 
         self.list_IDs, self.badge_ids = self._preprocess_user_ids(list_IDs[dset_type], badge_ids)
         self.data_shape = (self.input_length, len(ACTIONS))
@@ -75,6 +82,7 @@ class StackOverflowDataset(data.Dataset):
 
         for user in list_IDs:
             user = str(user)
+
             if self.badge_focus in badge_ids[user]:
                 valid = True
 
@@ -197,10 +205,29 @@ class IdentityScaler:
         return x
 
 class StackOverflowDatasetIncCounts(StackOverflowDataset):
-    def __init__(self, data_path='../data', dset_type='train', badge_focus='Electorate', subsample=5000, centered=True,
-                 window_length=70, input_length='full', out_dim=None, scaler_in=IdentityScaler(), scaler_out=IdentityScaler(), self_initialise=False, return_user_id=False, **kwargs):
-        super(StackOverflowDatasetIncCounts, self).__init__(data_path=data_path, dset_type=dset_type, badge_focus=badge_focus, subsample=subsample,
-                         centered=centered, window_length=window_length, input_length=input_length, out_dim=out_dim, return_user_id=return_user_id, **kwargs)
+    def __init__(self, data_path='../data', dset_type='train',
+                 badge_focus='Electorate',
+                 subsample=5000,
+                 centered=True,
+                 window_length=70,
+                 input_length='full',
+                 out_dim=None,
+                 scaler_in=IdentityScaler(),
+                 scaler_out=IdentityScaler(),
+                 self_initialise=False,
+                 return_user_id=False, **kwargs):
+
+        super(StackOverflowDatasetIncCounts, self).__init__(
+                        data_path=data_path,
+                        dset_type=dset_type,
+                        badge_focus=badge_focus,
+                        subsample=subsample,
+                        centered=centered,
+                        window_length=window_length,
+                        input_length=input_length,
+                        out_dim=out_dim,
+                        return_user_id=return_user_id,
+                        **kwargs)
 
         self.scaler_in = scaler_in
         self.scaler_out = scaler_out
@@ -231,6 +258,7 @@ def calculate_feature_transformation(train_dataset):
     print("Processing training data")
     for i in tqdm(range(len(train_dataset))):
         resp = train_dataset.__getitem__(i)
+
         in_d = resp[0]
         out_d = resp[2]
 
@@ -239,28 +267,33 @@ def calculate_feature_transformation(train_dataset):
 
     dat_in = np.array(dat_in)
     maxes_in = {}
-    for i, action in enumerate(ACTIONS):
-        maxes_in[action] = np.max(dat_in[:,:,i])
-        dat_in[:, :, i] = dat_in[:,:,i]/maxes_in[action]
+    if len(train_dataset.ACTIONS) > 1:
+        for i, action in enumerate(ACTIONS):
+            maxes_in[action] = np.max(dat_in[:,:,i])
+            dat_in[:, :, i] = dat_in[:,:,i]/maxes_in[action]
+    else:
+        maxes_in[0] = np.max(dat_in[:, :, 0])
+        dat_in[:, :, 0] = dat_in[:, :, 0]/maxes_in[0]
 
     maxes_out = np.max(dat_out)
     dat_out = dat_out / maxes_out
 
     class ScalerIn(IdentityScaler):
-        def __init__(self, maxes_in):
+        def __init__(self, maxes_in, actions=ACTIONS):
             self.maxes_in = maxes_in
+            self.ACTIONS = actions
 
         def transform(self, x):
             if len(x.shape) == 2:
-                x = x.reshape(1,-1,len(ACTIONS))
-            for i,a in enumerate(ACTIONS):
+                x = x.reshape(1,-1,len(self.ACTIONS))
+            for i,a in enumerate(self.ACTIONS):
                 x[:, :, i] = x[:, :, i] / self.maxes_in[a]
             return x
 
         def inverse_transform(self, x):
             if len(x.shape) == 2:
-                x = x.reshape(1,-1,len(ACTIONS))
-            for i,a in enumerate(ACTIONS):
+                x = x.reshape(1,-1,len(self.ACTIONS))
+            for i,a in enumerate(self.ACTIONS):
                 x[:, :, i] = x[:, :, i] * self.maxes_in[a]
             return x
 
@@ -273,7 +306,7 @@ def calculate_feature_transformation(train_dataset):
         def inverse_transform(self, x):
             return x*self.maxes_in
 
-    scaler_in = ScalerIn(maxes_in)
+    scaler_in = ScalerIn(maxes_in, train_dataset.ACTIONS)
     scaler_out = ScalerOut(maxes_out)
     # dat_out = np.array(dat_out)
 
@@ -423,3 +456,115 @@ def transform_data_to_file_folder_structure(path_to_csv, path_to_data_dir):
         obj['test'] = [int(u) for u in test]
         obj['validate'] = [int(u) for u in validate]
         json.dump(obj, f)
+
+def compile_smaller_files(input_actions, input_badges):
+    output_action_f_name = '../data/editor/actions_over_time.csv'
+    output_badges_f_name = '../data/editor/strunk_and_white_achievements.csv'
+
+    df_actions = pd.read_csv(input_actions[0])
+    for file in input_actions[1:]:
+        df_actions_temp = pd.read_csv(file)
+        df_actions = df_actions.merge(df_actions_temp, on='UserId', suffixes=("_x", ""), how='outer')
+
+    df_badges = pd.read_csv(input_badges[0])
+    for file in input_badges[1:]:
+        df_badges_temp = pd.read_csv(file)
+        df_badges = df_badges.merge(df_badges_temp, on='UserId', suffixes=("_x", ""), how='outer')
+
+    cols_to_drop = df_actions.columns[df_actions.columns.str.contains("_x")]
+    df_actions.drop(columns=cols_to_drop, inplace=True)
+
+    cols = df_actions.columns[df_actions.columns.str.contains("-")]
+    dates = pd.to_datetime(cols).date
+    df_actions.rename(columns={d: c for d, c in zip(cols, dates)}, inplace=True)
+
+    df_actions.drop_duplicates(subset="UserId", inplace=True)
+    df_badges.drop_duplicates(subset="UserId", inplace=True)
+
+    df_actions.fillna(0, inplace=True)
+    df_badges.fillna(0, inplace=True)
+
+    df_badges.set_index('UserId', inplace=True)
+    df_badges.loc[df_badges['Date'] == 0, 'Date'] = df_badges.loc[df_badges['Date'] == 0, 'Date_x']
+    df_badges.drop(columns=['Date_x'], inplace=True)
+    df_badges = df_badges[df_badges['Date'] != 0]
+    df_badges.reset_index(inplace=True)
+
+    df_actions.to_csv(output_action_f_name, index=False)
+    df_badges.to_csv(output_badges_f_name, index=False)
+
+def transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to_csv_badges, path_to_data_dir):
+    '''
+    Expecting data in the PIVOTED format from the Stack Overflow query editor. 
+    Here the csv file has an index of userIds, and the columns are the date from 
+    start to end. The values are the counts of edits that that user performed on that
+    day. There is a separate file for the userId.
+    '''
+    import tqdm
+
+    data_actions = pd.read_csv(path_to_csv_actions)
+    badge_achievements = pd.read_csv(path_to_csv_badges)
+
+    data_actions = data_actions[data_actions.UserId.isin(badge_achievements.UserId)]
+    badge_achievements = badge_achievements[badge_achievements.UserId.isin(data_actions.UserId)]
+
+    badge_achievements.Date = pd.to_datetime(badge_achievements.Date)
+    badge_achievements['day'] = (badge_achievements.Date - pd.datetime(year=2015, month=1, day=1)).dt.days
+
+    user_ids = badge_achievements.UserId.unique()
+    size_data = len(user_ids)
+
+    np.random.seed(11)
+
+    train = np.random.choice(user_ids, size=int(np.floor(0.6 * size_data)), replace=False)
+    user_ids = user_ids[~np.in1d(user_ids, train)]
+    validate = np.random.choice(user_ids, size=int(np.floor(0.2 * size_data)), replace=False)
+    user_ids = user_ids[~np.in1d(user_ids, validate)]
+    test = np.random.choice(user_ids, size=int(np.floor(0.2 * size_data)), replace=False)
+
+    data_actions.set_index('UserId', inplace=True)
+    badge_achievements.set_index('UserId', inplace=True)
+
+    num_days = (badge_achievements.Date.max() - pd.datetime(year=2015, month=1, day=1)).days
+
+    for dset in [train, validate, test]:
+        for user in tqdm.tqdm(dset):
+
+            trajectory = data_actions.loc[user]
+            trajectory = trajectory.reset_index()
+            trajectory['index'] = pd.to_datetime(trajectory['index'])
+            trajectory['day'] = (trajectory['index'] - pd.datetime(year=2015, month=1, day=1)).dt.days
+            trajectory.rename(columns={'index': 'date', user: 'num_actions'}, inplace=True)
+            trajectory.sort_values('day', inplace=True)
+            trajectory.set_index('day', inplace=True)
+            trajectory = trajectory.reindex(range(num_days+1), fill_value=0)
+
+            action_trajectory = torch.tensor(trajectory[['num_actions']].values, dtype=torch.long)
+            torch.save(action_trajectory, '{}/user_{}.pt'.format(path_to_data_dir, user))
+
+    with open('{}/badge_achievements.json'.format(path_to_data_dir), 'w') as f:
+        badge_dict = badge_achievements['day'].to_dict()
+        badge_dict = {k: {'strunk_white': [int(v)]} for k,v in badge_dict.items()}
+        json.dump(badge_dict, f)
+
+    with open('{}/data_indexes.json'.format(path_to_data_dir), 'w') as f:
+        obj = {}
+        obj['train'] = [int(u) for u in train]
+        obj['test'] = [int(u) for u in test]
+        obj['validate'] = [int(u) for u in validate]
+        json.dump(obj, f)
+
+
+if __name__ == '__main__':
+
+    #### BUILD THE INPUT FILE ####
+    # input_a_fs = ['../data/editor/actions-2015-06.csv', '../data/editor/actions-2016-12.csv']
+    # input_b_fs = ['../data/editor/badges-2015-06.csv', '../data/editor/badges-2016-12.csv']
+    # compile_smaller_files(input_a_fs, input_b_fs)
+
+    #### BUILD THE TORCH INPUT FILES ####
+    path_to_csv_actions = '../data/editor/actions_over_time.csv'
+    path_to_csv_badges = '../data/editor/strunk_and_white_achievements.csv'
+    data_dir = '../data/editor/'
+
+    transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to_csv_badges, data_dir)
