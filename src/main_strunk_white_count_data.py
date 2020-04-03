@@ -164,7 +164,7 @@ def main(args):
             torch.save(model.state_dict(),
                        f"{args.output}/models/{model_name}.best.pt")
             count_valid_not_improving = 0
-            
+
         # early stopping
         else:
             count_valid_not_improving += 1

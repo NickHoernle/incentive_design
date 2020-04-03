@@ -102,7 +102,7 @@ mkdir -p ${dest_path}  # make it if required
 rsync --archive --update --compress --progress ${src_path}/ ${dest_path}
 
 # unzip the torch files in the destination directory
-unzip -q -o ${dest_path}/pt_data.zip -d ${dest_path}
+unzip -q -f ${dest_path}/pt_data.zip -d ${dest_path}
 
 num_lines=$(ls -l ${dest_path}/* | wc -l)
 echo "Number of files at the destination: ${num_lines}"
@@ -123,7 +123,7 @@ mkdir -p ${output_dir}
 mkdir -p ${output_dir}/models
 mkdir -p ${output_dir}/logs
 
-echo "modelname,batchsize,lr,gamma,seed,\n" >> ${output_dir}/results.csv
+echo "modelname,batchsize,lr,gamma,seed,\n" > ${output_dir}/results.csv
 
 experiment_text_file=$1
 COMMAND="`sed \"${SLURM_ARRAY_TASK_ID}q;d\" ${experiment_text_file}`"
