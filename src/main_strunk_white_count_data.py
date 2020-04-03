@@ -163,7 +163,8 @@ def main(args):
             best_loss = vld_loss
             torch.save(model.state_dict(),
                        f"{args.output}/models/{model_name}.best.pt")
-
+            count_valid_not_improving = 0
+            
         # early stopping
         else:
             count_valid_not_improving += 1
