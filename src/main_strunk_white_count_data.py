@@ -143,11 +143,8 @@ def main(args):
     best_loss = sys.float_info.max
 
     results_file = open(f'{args.output}/results.csv', 'a')
-    results_file.write(model_name      + ',' +
-                       args.batch_size + ',' +
-                       args.lr         + ',' +
-                       args.gamma      + ',' +
-                       args.seed       + ',')
+    results_file.write(f'{model_name},{args.batch_size},{args.lr},{args.gamma},'
+                       f'{args.seed},')
 
     count_valid_not_improving = 0
 
@@ -159,7 +156,7 @@ def main(args):
         print(f'{epoch},{loss},{vld_loss}', file=log_fh)
         scheduler.step()
 
-        results_file.write(vld_loss + ',')
+        results_file.write(f'{vld_loss},')
 
         if vld_loss < best_loss:
             # only save the model if it is performing better on the validation set
