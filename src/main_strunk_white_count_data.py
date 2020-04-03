@@ -169,7 +169,7 @@ def main(args):
         else:
             count_valid_not_improving += 1
 
-        if count_valid_not_improving >= args.early_stopping_lim:
+        if count_valid_not_improving > args.early_stopping_lim:
             print(f'Early stopping implemented at epoch #: {epoch}', file=log_fh)
             break
 
