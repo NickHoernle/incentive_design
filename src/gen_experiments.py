@@ -11,7 +11,7 @@ SCRATCH_HOME = f'{SCRATCH_DISK}/{USER}'
 
 DATA_HOME = f'{SCRATCH_HOME}/incentive_design/data'
 base_call = (f"python main_strunk_white_count_data.py --input {DATA_HOME} --output {DATA_HOME}/output "
-             "--epochs 2000 --quiet")
+             "--epochs 2000 --early-stopping-lim 25 --quiet")
 
 repeats = 3
 learning_rates = [1e-2, 1e-3, 1e-4, 1e-5]
