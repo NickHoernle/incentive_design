@@ -92,7 +92,7 @@ def main(args):
             'window_length': args.window_length,
             'badge_focus': 'strunk_white',
             'out_dim': 0,
-            'data_path': args.data,
+            'data_path': args.input,
             'badge_threshold': 80,
             'badges_to_avoid': [],
             'ACTIONS': [0]
