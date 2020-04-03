@@ -102,7 +102,7 @@ mkdir -p ${dest_path}  # make it if required
 rsync --archive --update --compress --progress ${src_path}/ ${dest_path}
 
 # unzip the torch files in the destination directory
-unzip -q -f ${dest_path}/pt_data.zip -d ${dest_path}
+#unzip -q -f ${dest_path}/pt_data.zip -d ${dest_path}
 
 num_lines=$(ls -l ${dest_path}/* | wc -l)
 echo "Number of files at the destination: ${num_lines}"
