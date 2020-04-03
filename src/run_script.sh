@@ -123,6 +123,8 @@ mkdir -p ${output_dir}
 mkdir -p ${output_dir}/models
 mkdir -p ${output_dir}/logs
 
+echo "modelname,batchsize,lr,gamma,seed,\n" >> ${output_dir}/results.csv
+
 experiment_text_file=$1
 COMMAND="`sed \"${SLURM_ARRAY_TASK_ID}q;d\" ${experiment_text_file}`"
 #./main_strunk_white_count_data.py --input ${input_dir} --output ${output_dir} --epochs 50

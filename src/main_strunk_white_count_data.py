@@ -149,6 +149,8 @@ def main(args):
                        args.gamma      + ',' +
                        args.seed       + ',')
 
+    count_valid_not_improving = 0
+
     for epoch in tqdm(range(1, args.epochs + 1)):
 
         loss = train(args, model, device, train_loader, optimizer, epoch)
@@ -161,13 +163,20 @@ def main(args):
 
         if vld_loss < best_loss:
             # only save the model if it is performing better on the validation set
-            # TODO implement early stopping here to not train unnecessarily
             best_loss = vld_loss
             torch.save(model.state_dict(),
-                       f"{args.output}/{model_name}.best.pt")
+                       f"{args.output}/models/{model_name}.best.pt")
+
+        # early stopping
+        else:
+            count_valid_not_improving += 1
+
+        if count_valid_not_improving >= args.early_stopping_lim:
+            print(f'Early stopping implemented at epoch #: {epoch}', file=log_fh)
+            break
 
     results_file.write('\n')
-    torch.save(model.state_dict(), f"{args.output}/{model_name}.final.pt")
+    torch.save(model.state_dict(), f"{args.output}/models/{model_name}.final.pt")
 
     results_file.close()
     log_fh.close()
@@ -230,6 +239,9 @@ def construct_parser():
                                                  'on the population of users who achieved Strunk & White')
     parser.add_argument('--batch-size', type=int, default=128, metavar='N',
                         help='input batch size for training (default: 128)')
+    parser.add_argument('--early-stopping-lim', type=int, default=10, metavar='N',
+                        help='Early stopping implemented after N epochs with no improvement '
+                             '(default: 10)')
     parser.add_argument('--test-batch-size', type=int, default=1000,
                         metavar='N', help='input batch size for testing '
                                           '(default: 1000)')
