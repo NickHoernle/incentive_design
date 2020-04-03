@@ -10,7 +10,7 @@ SCRATCH_DISK = '/disk/scratch'
 SCRATCH_HOME = f'{SCRATCH_DISK}/{USER}'
 
 DATA_HOME = f'{SCRATCH_HOME}/incentive_design/data'
-base_call = (f"python main.py --input {DATA_HOME} --output {DATA_HOME}/output "
+base_call = (f"python main_strunk_white_count_data.py --input {DATA_HOME} --output {DATA_HOME}/output "
              "--epochs 2000 --quiet")
 
 repeats = 3
