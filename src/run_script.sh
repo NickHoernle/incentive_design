@@ -104,8 +104,9 @@ rsync --archive --update --compress --progress ${src_path}/ ${dest_path}
 # unzip the torch files in the destination directory
 unzip -q -o ${dest_path}/pt_data.zip -d ${dest_path}
 
-echo "Number of files at the destination:"
-echo ls -l ${dest_path} | wc -l
+num_lines=$(ls -l ${dest_path}/* | wc -l)
+echo "Number of files at the destination: ${num_lines}"
+
 
 
 # ==============================
@@ -117,13 +118,14 @@ echo ls -l ${dest_path} | wc -l
 # inclusive.
 
 input_dir=${dest_path}
-output_dir=${SCRATCH_DISK}/${USER}/incentive_design/data/output
+output_dir=${dest_path}/output
 mkdir -p ${output_dir}
 mkdir -p ${output_dir}/models
 mkdir -p ${output_dir}/logs
 
 experiment_text_file=$1
 COMMAND="`sed \"${SLURM_ARRAY_TASK_ID}q;d\" ${experiment_text_file}`"
+#./main_strunk_white_count_data.py --input ${input_dir} --output ${output_dir} --epochs 50
 echo "Running provided command: ${COMMAND}"
 eval "${COMMAND}"
 echo "Command ran successfully!"

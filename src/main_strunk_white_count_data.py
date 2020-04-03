@@ -127,8 +127,7 @@ def main(args):
                 proximity_to_badge=True
             ).to(device)
 
-    model_name = 'strunk_white_' + args.model_name + "_" + model_name + '.pt'
-
+    model_name = 'strunk_white-' + args.model_name + "-" + model_name + '.pt'
     PATH_TO_MODEL = args.output+'/models/'+model_name
 
     if os.path.exists(PATH_TO_MODEL):
@@ -143,6 +142,13 @@ def main(args):
     log_fh = open(f'{args.output}/logs/{model_name}.log', 'w')
     best_loss = sys.float_info.max
 
+    results_file = open(f'{args.output}/results.csv', 'a')
+    results_file.write(model_name      + ',' +
+                       args.batch_size + ',' +
+                       args.lr         + ',' +
+                       args.gamma      + ',' +
+                       args.seed       + ',')
+
     for epoch in tqdm(range(1, args.epochs + 1)):
 
         loss = train(args, model, device, train_loader, optimizer, epoch)
@@ -151,6 +157,8 @@ def main(args):
         print(f'{epoch},{loss},{vld_loss}', file=log_fh)
         scheduler.step()
 
+        results_file.write(vld_loss + ',')
+
         if vld_loss < best_loss:
             # only save the model if it is performing better on the validation set
             # TODO implement early stopping here to not train unnecessarily
@@ -158,8 +166,10 @@ def main(args):
             torch.save(model.state_dict(),
                        f"{args.output}/{model_name}.best.pt")
 
+    results_file.write('\n')
     torch.save(model.state_dict(), f"{args.output}/{model_name}.final.pt")
 
+    results_file.close()
     log_fh.close()
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -185,7 +195,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
 
         train_loss += loss.item()
 
-        if batch_idx % args.log_interval == 0:
+        if batch_idx % args.log_interval == 0 and not args.quiet:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                        100. * batch_idx / len(train_loader), loss.item()))
@@ -231,6 +241,8 @@ def construct_parser():
                         help='Learning rate step gamma (default: 0.9)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
+    parser.add_argument('--quiet', action='store_true', default=False,
+                        help='Limits the about of output to std.out')
     parser.add_argument('--seed', type=int, default=None, metavar='S',
                         help='random seed (default: random number)')
     parser.add_argument('--log-interval', type=int, default=10, metavar='N',
