@@ -98,7 +98,7 @@ def main(args):
         logging.info(f'{args.output} does not exist, creating...')
         os.makedirs(args.output)
 
-    loader_params, dset_params = get_loader_params()
+    loader_params, dset_params = get_loader_params(args=args)
 
     dset_train = so_data.StackOverflowDatasetIncCounts(
                             dset_type='train',
