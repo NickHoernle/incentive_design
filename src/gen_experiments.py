@@ -14,7 +14,7 @@ base_call = (f"python main_strunk_white_count_data.py --input {DATA_HOME} --outp
              "--epochs 2000 --early-stopping-lim 25 --model_name fp_flow_count --quiet")
 
 repeats = 3
-learning_rates = [1e-2, 1e-3, 1e-4, 1e-5]
+learning_rates = [1e-3, 1e-4, 1e-5, 1e-6]
 gammas = [.6, .7, .8, .9, .99]
 
 settings = [(lr, gam, rep) for lr in learning_rates for gam in gammas
