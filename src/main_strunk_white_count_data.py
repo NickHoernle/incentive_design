@@ -53,6 +53,24 @@ def setup_cuda(seed, device):
 
 loss_fn = lambda x1,x2,x3: models.ZeroInflatedPoisson_loss_function(x1,x2,x3)
 
+def get_loader_params(args):
+    # Loading Parameters
+    loader_params = {
+        'batch_size': int(args.batch_size),
+        'shuffle': True,
+        'num_workers': 8
+    }
+    dset_params = {
+        'window_length': args.window_length,
+        'badge_focus': 'strunk_white',
+        'out_dim': 0,
+        'data_path': args.input,
+        'badge_threshold': 80,
+        'badges_to_avoid': [],
+        'ACTIONS': [0]
+    }
+    return loader_params, dset_params
+
 def main(args):
     # TODO: add checkpointing
     use_cuda = not args.no_cuda and torch.cuda.is_available()
@@ -80,23 +98,7 @@ def main(args):
         logging.info(f'{args.output} does not exist, creating...')
         os.makedirs(args.output)
 
-    kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
-
-    # Loading Parameters
-    loader_params = {
-            'batch_size': int(args.batch_size),
-            'shuffle': True,
-            'num_workers': 8
-        }
-    dset_params = {
-            'window_length': args.window_length,
-            'badge_focus': 'strunk_white',
-            'out_dim': 0,
-            'data_path': args.input,
-            'badge_threshold': 80,
-            'badges_to_avoid': [],
-            'ACTIONS': [0]
-        }
+    loader_params, dset_params = get_loader_params()
 
     dset_train = so_data.StackOverflowDatasetIncCounts(
                             dset_type='train',
@@ -170,7 +172,7 @@ def main(args):
             count_valid_not_improving += 1
 
         if count_valid_not_improving > args.early_stopping_lim:
-            print(f'Early stopping implemented at epoch #: {epoch}', file=log_fh)
+            print(f'Early stopping implemented at epoch #: {epoch}')
             break
 
     results_file.write('\n')
