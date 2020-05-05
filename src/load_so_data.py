@@ -459,8 +459,8 @@ def transform_data_to_file_folder_structure(path_to_csv, path_to_data_dir):
         json.dump(obj, f)
 
 def compile_smaller_files(input_actions, input_badges):
-    output_action_f_name = '../data/editor/actions_over_time.csv'
-    output_badges_f_name = '../data/editor/strunk_and_white_achievements.csv'
+    output_action_f_name = '../data/actions_over_time.csv'
+    output_badges_f_name = '../data/strunk_and_white_achievements.csv'
 
     df_actions = pd.read_csv(input_actions[0])
     for file in input_actions[1:]:
@@ -472,24 +472,23 @@ def compile_smaller_files(input_actions, input_badges):
         df_badges_temp = pd.read_csv(file)
         df_badges = df_badges.merge(df_badges_temp, on='UserId', suffixes=("_x", ""), how='outer')
 
+        df_badges.drop_duplicates(subset="UserId", inplace=True)
+        df_badges.fillna(0, inplace=True)
+
+        df_badges.set_index('UserId', inplace=True)
+        df_badges.loc[df_badges['Date'] == 0, 'Date'] = df_badges.loc[df_badges['Date'] == 0, 'Date_x']
+        df_badges.drop(columns=['Date_x'], inplace=True)
+        df_badges = df_badges[df_badges['Date'] != 0]
+        df_badges.reset_index(inplace=True)
+
     cols_to_drop = df_actions.columns[df_actions.columns.str.contains("_x")]
     df_actions.drop(columns=cols_to_drop, inplace=True)
 
     cols = df_actions.columns[df_actions.columns.str.contains("-")]
     dates = pd.to_datetime(cols).date
     df_actions.rename(columns={d: c for d, c in zip(cols, dates)}, inplace=True)
-
     df_actions.drop_duplicates(subset="UserId", inplace=True)
-    df_badges.drop_duplicates(subset="UserId", inplace=True)
-
     df_actions.fillna(0, inplace=True)
-    df_badges.fillna(0, inplace=True)
-
-    df_badges.set_index('UserId', inplace=True)
-    df_badges.loc[df_badges['Date'] == 0, 'Date'] = df_badges.loc[df_badges['Date'] == 0, 'Date_x']
-    df_badges.drop(columns=['Date_x'], inplace=True)
-    df_badges = df_badges[df_badges['Date'] != 0]
-    df_badges.reset_index(inplace=True)
 
     df_actions.to_csv(output_action_f_name, index=False)
     df_badges.to_csv(output_badges_f_name, index=False)
@@ -560,13 +559,13 @@ if __name__ == '__main__':
     import pandas as pd
 
     #### BUILD THE INPUT FILE ####
-    # input_a_fs = ['../data/editor/actions-2015-06.csv', '../data/editor/actions-2016-12.csv']
-    # input_b_fs = ['../data/editor/badges-2015-06.csv', '../data/editor/badges-2016-12.csv']
+    # input_a_fs = ['../data/'+ f for f in ['actions-2010-01.csv', 'actions-2011-01.csv', 'actions-2013-01.csv', 'actions-2015-06.csv', 'actions-2016-12.csv']]
+    # input_b_fs = ['../data/'+ f for f in ['badges-2010-01.csv', 'badges-2011-01.csv', 'badges-2013-01.csv', 'badges-2015-06.csv', 'badges-2016-12.csv']]
     # compile_smaller_files(input_a_fs, input_b_fs)
 
     #### BUILD THE TORCH INPUT FILES ####
-    path_to_csv_actions = '../data/editor/actions_over_time.csv'
-    path_to_csv_badges = '../data/editor/strunk_and_white_achievements.csv'
-    data_dir = '../data/editor/'
-
+    path_to_csv_actions = '../data/actions_over_time.csv'
+    path_to_csv_badges = '../data/strunk_and_white_achievements.csv'
+    data_dir = '../data/pt_editor'
+    #
     transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to_csv_badges, data_dir)

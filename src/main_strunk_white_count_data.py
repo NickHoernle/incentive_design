@@ -216,7 +216,7 @@ def test(args, model, device, valid_loader):
 
     with torch.no_grad():
         for batch_idx, (data) in enumerate(valid_loader):
-            data = [d.to(device) for d in data]
+            data = [d.to(device) for d in data if type(d) == torch.Tensor]
             dat_in, dat_kern, dat_out, dat_prox, dat_badge_date = data
 
             recon_batch, latent_loss = model(dat_in,
