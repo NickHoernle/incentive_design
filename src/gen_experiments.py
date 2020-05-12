@@ -9,7 +9,7 @@ USER = os.getenv('USER')
 SCRATCH_DISK = '/disk/scratch'
 SCRATCH_HOME = f'{SCRATCH_DISK}/{USER}'
 
-DATA_HOME = f'{SCRATCH_HOME}/incentive_design/data'
+DATA_HOME = f'{SCRATCH_HOME}/incentive_design/data/pt_editor'
 base_call = (f"python main_strunk_white_count_data.py --input {DATA_HOME} --output {DATA_HOME}/output "
              "--epochs 2000 --early-stopping-lim 250 --model-name full_personalised_normalizing_flow --quiet")
 
