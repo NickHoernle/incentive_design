@@ -102,13 +102,21 @@ mkdir -p ${dest_path}  # make it if required
 # clear the existing data directory
 
 pt_editor=${dest_path}/pt_editor.zip
+pt_editor_folder=${dest_path}/pt_editor
 
 if [ -e "$pt_editor" ]
 then
     echo "pt_editor exists"
 else
+    echo "moving pt_editor.zip"
     rsync --archive --update --compress --progress ${src_path} ${dest_path}
-    unzip -q ${dest_path}/pt_editor.zip -d ${dest_path}
+    if [ -e "$pt_editor_folder" ]
+    then
+        echo "but pt_editor exists.... pause for 60 seconds"
+        sleep 1m
+    else
+        unzip -q ${dest_path}/pt_editor.zip -d ${dest_path}
+    fi
 fi
 
 # unzip the torch files in the destination directory
