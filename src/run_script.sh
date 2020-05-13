@@ -99,15 +99,15 @@ mkdir -p ${dest_path}  # make it if required
 # * for more about the (endless) rsync options, see the docs:
 #       https://download.samba.org/pub/rsync/rsync.html
 
-rsync --archive --update --compress --progress ${src_path} ${dest_path}
 # clear the existing data directory
 
-pt_editor=${dest_path}/pt_editor
+pt_editor=${dest_path}/pt_editor.zip
 
 if [ -e "$pt_editor" ]
 then
     echo "pt_editor exists"
 else
+    rsync --archive --update --compress --progress ${src_path} ${dest_path}
     unzip -q ${dest_path}/pt_editor.zip -d ${dest_path}
 fi
 
