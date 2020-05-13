@@ -115,7 +115,8 @@ else
         echo "but pt_editor exists.... pause for 60 seconds"
         sleep 1m
     else
-        unzip -q ${dest_path}/pt_editor.zip -d ${dest_path}
+        echo "Ok fine so unzip the bastard"
+        unzip -q -o ${dest_path}/pt_editor.zip -d ${dest_path}
     fi
 fi
 
