@@ -83,7 +83,7 @@ echo "Moving input data to the compute node's scratch space: $SCRATCH_DISK"
 
 # input data directory path on the DFS - change line below if loc different
 repo_home=/home/${USER}/git/incentive_design
-src_path=${repo_home}/data/editor
+src_path=${repo_home}/data/pt_editor.zip
 
 # input data directory path on the scratch disk of the node
 dest_path=${SCRATCH_DISK}/${USER}/incentive_design/data
@@ -99,12 +99,15 @@ mkdir -p ${dest_path}  # make it if required
 # * for more about the (endless) rsync options, see the docs:
 #       https://download.samba.org/pub/rsync/rsync.html
 
-rsync --archive --update --compress --progress ${src_path}/ ${dest_path}
+rsync --archive --update --compress --progress ${src_path} ${dest_path}
+# clear the existing data directory
+rm -rf ${dest_path}/pt_editor
+unzip -q ${dest_path}/pt_editor.zip -d ${dest_path}
 
 # unzip the torch files in the destination directory
 #unzip -q -f ${dest_path}/pt_data.zip -d ${dest_path}
 
-num_lines=$(ls -l ${dest_path}/* | wc -l)
+num_lines=$(ls -l ${dest_path}/pt_editor/* | wc -l)
 echo "Number of files at the destination: ${num_lines}"
 
 
@@ -117,13 +120,14 @@ echo "Number of files at the destination: ${num_lines}"
 # you execute `sbatch --array=1:100 ...` the jobs will get numbers 1 to 100
 # inclusive.
 
-input_dir=${dest_path}
+input_dir=${dest_path}/pt_editor
 output_dir=${dest_path}/output
+
 mkdir -p ${output_dir}
 mkdir -p ${output_dir}/models
 mkdir -p ${output_dir}/logs
 
-echo "modelname,batchsize,lr,gamma,seed,\n" > ${output_dir}/results.csv
+#echo "modelname,batchsize,lr,gamma,seed,\n" > ${output_dir}/results.csv
 
 experiment_text_file=$1
 COMMAND="`sed \"${SLURM_ARRAY_TASK_ID}q;d\" ${experiment_text_file}`"
