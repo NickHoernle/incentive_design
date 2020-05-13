@@ -150,7 +150,7 @@ def main(args):
 
     count_valid_not_improving = 0
 
-    for epoch in tqdm(range(1, args.epochs + 1)):
+    for epoch in tqdm(range(1, args.epochs + 1), disable=use_cuda):
 
         loss = train(args, model, device, train_loader, optimizer, epoch)
         vld_loss = test(args, model, device, valid_loader)
