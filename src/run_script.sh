@@ -102,7 +102,7 @@ mkdir -p ${dest_path}  # make it if required
 rsync --archive --update --compress --progress ${src_path} ${dest_path}
 # clear the existing data directory
 
-pt_editor = ${dest_path}/pt_editor
+pt_editor=${dest_path}/pt_editor
 
 if [ -e "$pt_editor" ]
 then
