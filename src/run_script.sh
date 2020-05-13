@@ -104,6 +104,9 @@ mkdir -p ${dest_path}  # make it if required
 pt_editor=${dest_path}/pt_editor.zip
 pt_editor_folder=${dest_path}/pt_editor
 
+# sleep a random amount of time to allow other scripts to process this stuff
+sleep $[ ( $RANDOM % 60 )  + 1 ]s
+
 if [ -e "$pt_editor" ]
 then
     echo "pt_editor exists"
