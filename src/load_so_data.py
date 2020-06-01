@@ -490,6 +490,12 @@ def compile_smaller_files(input_actions, input_badges):
     df_actions.drop_duplicates(subset="UserId", inplace=True)
     df_actions.fillna(0, inplace=True)
 
+    df_badges.Date = pd.to_datetime(df_badges.Date)
+    df_badges = df_badges[df_badges.Date > pd.datetime(year=2010, month=2, day=1)]
+    df_badges = df_badges[df_badges.Date < pd.datetime(year=2020, month=1, day=1)]
+
+    df_actions = df_actions[df_actions.UserId.isin(df_badges.UserId)]
+
     df_actions.to_csv(output_action_f_name, index=False)
     df_badges.to_csv(output_badges_f_name, index=False)
 
@@ -508,8 +514,10 @@ def transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to
     data_actions = data_actions[data_actions.UserId.isin(badge_achievements.UserId)]
     badge_achievements = badge_achievements[badge_achievements.UserId.isin(data_actions.UserId)]
 
+    start_date = pd.datetime(year=2009, month=1, day=1)
+
     badge_achievements.Date = pd.to_datetime(badge_achievements.Date)
-    badge_achievements['day'] = (badge_achievements.Date - pd.datetime(year=2015, month=1, day=1)).dt.days
+    badge_achievements['day'] = (badge_achievements.Date - start_date).dt.days
 
     user_ids = badge_achievements.UserId.unique()
     size_data = len(user_ids)
@@ -525,7 +533,7 @@ def transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to
     data_actions.set_index('UserId', inplace=True)
     badge_achievements.set_index('UserId', inplace=True)
 
-    num_days = (badge_achievements.Date.max() - pd.datetime(year=2015, month=1, day=1)).days
+    num_days = (badge_achievements.Date.max() - start_date).days
 
     for dset in [train, validate, test]:
         for user in tqdm.tqdm(dset):
@@ -533,7 +541,7 @@ def transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to
             trajectory = data_actions.loc[user]
             trajectory = trajectory.reset_index()
             trajectory['index'] = pd.to_datetime(trajectory['index'])
-            trajectory['day'] = (trajectory['index'] - pd.datetime(year=2015, month=1, day=1)).dt.days
+            trajectory['day'] = (trajectory['index'] - start_date).dt.days
             trajectory.rename(columns={'index': 'date', user: 'num_actions'}, inplace=True)
             trajectory.sort_values('day', inplace=True)
             trajectory.set_index('day', inplace=True)
@@ -559,13 +567,13 @@ if __name__ == '__main__':
     import pandas as pd
 
     #### BUILD THE INPUT FILE ####
-    # input_a_fs = ['../data/'+ f for f in ['actions-2010-01.csv', 'actions-2011-01.csv', 'actions-2013-01.csv', 'actions-2015-06.csv', 'actions-2016-12.csv']]
-    # input_b_fs = ['../data/'+ f for f in ['badges-2010-01.csv', 'badges-2011-01.csv', 'badges-2013-01.csv', 'badges-2015-06.csv', 'badges-2016-12.csv']]
-    # compile_smaller_files(input_a_fs, input_b_fs)
+    input_a_fs = ['../data/'+ f for f in [f'actions-{date}-01.csv' for date in [2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019]]]
+    input_b_fs = ['../data/'+ f for f in [f'badges-{date}-01.csv' for date in [2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019]]]
+    compile_smaller_files(input_a_fs, input_b_fs)
 
     #### BUILD THE TORCH INPUT FILES ####
     path_to_csv_actions = '../data/actions_over_time.csv'
     path_to_csv_badges = '../data/strunk_and_white_achievements.csv'
     data_dir = '../data/pt_editor'
-    #
+    
     transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to_csv_badges, data_dir)
