@@ -10,12 +10,12 @@ SCRATCH_DISK = '/disk/scratch'
 SCRATCH_HOME = f'{SCRATCH_DISK}/{USER}'
 
 DATA_HOME = f'{SCRATCH_HOME}/incentive_design/data'
-base_call = (f"python main_strunk_white_count_data.py --input {DATA_HOME}/pt_editor --output {DATA_HOME}/output "
+base_call = (f"python main.py --badge electorate --input {DATA_HOME}/pt_electorate --output {DATA_HOME}/output "
              "--epochs 2000 --early-stopping-lim 250 --model-name full_personalised_normalizing_flow --quiet")
 
-repeats = 3
+repeats = 1
 learning_rates = [1e-2, 1e-3, 1e-4]
-gammas = [.6, .7, .8, .9, .99]
+gammas = [.9, .99, .999]
 
 settings = [(lr, gam, rep) for lr in learning_rates for gam in gammas
             for rep in range(repeats)]

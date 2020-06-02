@@ -1,265 +1,319 @@
 #!/usr/bin/env python
 
-import numpy as np
-import torch
-import torch.nn as nn
-from sklearn.preprocessing import MinMaxScaler
-import pickle
-from torch.utils.data import TensorDataset, DataLoader
+import sys
+import os
+import argparse
+import logging
+
 from tqdm import tqdm
+import torch
+from torch.utils.data import TensorDataset, DataLoader
+from torch.nn.utils import clip_grad_norm_
+
 import models
-from torch.nn import functional as F
-
 import load_so_data as so_data
-from torch.backends import cudnn
 
 
-# CUDA for PyTorch
-use_cuda = torch.cuda.is_available()
-device = torch.device("cuda:0" if use_cuda else "cpu")
-cudnn.benchmark = True
+available_models = {
+        'baseline_count': models.BaselineVAECount,
+        # 'cd_linear_count': models.LinearParametricVAECount,
+        # 'personalised_linear_count': models.LinearParametricPlusSteerParamVAECount,
+        'full_parameterised_count': models.FullParameterisedVAECount,
+        'full_personalised_parameterised_count': models.FullParameterisedPlusSteerParamVAECount,
+        'baseline_flow_count': models.NormalizingFlowBaseline,
+        'fp_flow_count': models.NormalizingFlowFP,
+        'full_personalised_normalizing_flow': models.NormalizingFlowFP_PlusSteer
+    }
 
 
-def main(args):
+def isnan(x):
+    return x != x
 
+
+def raise_cuda_error():
+    raise ValueError('You wanted to use cuda but it is not available. '
+                     'Check nvidia-smi and your configuration. If you do '
+                         'not want to use cuda, pass the --no-cuda flag.')
+
+
+def setup_cuda(seed, device):
+    if device.index:
+        device_str = f"{device.type}:{device.index}"
+    else:
+        device_str = f"{device.type}"
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = device_str
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    # This does make things slower :(
+    torch.backends.cudnn.benchmark = False
+
+loss_fn = lambda x1,x2,x3: models.ZeroInflatedPoisson_loss_function(x1,x2,x3)
+
+
+def get_loader_params(badge_name, args):
     # Loading Parameters
-    params = {'batch_size': 256, 'shuffle': True, 'num_workers': 20}
-
-    max_epochs = 1000
-    PRINT_NUM = 50
-    learning_rate = 1e-3
-    # weight_decay = 1e-5
-    window_len = 5*7
-
-    common_params = {
-        'window_length': window_len,
-        'badge_focus': 'Electorate',
-        'out_dim': 'QuestionVotes',
-        'data_path': '../data',
-        # 'input_length': 4*7
+    loader_params = {
+        'batch_size': int(args.batch_size),
+        'shuffle': True,
+        'num_workers': 8
     }
 
-    dset_train = so_data.StackOverflowDataset(dset_type='train', subsample=4000, centered=False,
-                                              **common_params)
-    # dset_test = so_data.StackOverflowDataset(dset_type='test', subsample=1000,
-    #                                          **common_params)
-    dset_valid = so_data.StackOverflowDataset(dset_type='validate', subsample=1000, centered=False,
-                                              **common_params)
+    # specific params
+    if badge_name == "electorate":
+        params = {
+            "out_dim": "QuestionVotes",
+            'badges_to_avoid': [],
+            'badge_threshold': 600,
+        }
+    if badge_name == "civic_duty":
+        params = {
+            "out_dim": ['QuestionVotes', 'AnswerVotes'],
+            'badges_to_avoid': ["Electorate"],
+            'badge_threshold': 300,
+        }
+    elif badge_name == "strunk_white":
+        params = {
+            "out_dim": 0,
+            "ACTIONS": [0],
+            'badges_to_avoid': [],
+            'badge_threshold': 80,
+        }
 
-    train_loader = DataLoader(dset_train, **params)
-    valid_loader = DataLoader(dset_valid, **params)
-
-    model_to_test = {
-        # 'baseline': models.BaselineVAE,
-        # 'linear': models.LinearParametricVAE,
-        # 'personalised_linear': models.LinearParametricPlusSteerParamVAE,
-        # 'full_parameterised': models.FullParameterisedVAE,
-        # 'full_personalised_parameterised': models.FullParameterisedPlusSteerParamVAE,
-        # 'full_personalised_parameterised_plus_flow': models.FullParameterisedPlusSteerPlusNormParamVAE
+    # add the common params
+    dset_params = {
+        'window_length': args.window_length,
+        'badge_focus': badge_name.replace("_", " ").title().replace(" ", ""),
+        'data_path': args.input,
+        **params
     }
+
+    return loader_params, dset_params
+
+
+def main(badge_name, args):
+    # TODO: add checkpointing
+    use_cuda = not args.no_cuda and torch.cuda.is_available()
+    if not args.no_cuda and not use_cuda:
+        raise_cuda_error()
+
+    device = torch.device("cuda" if use_cuda else "cpu")
+    if use_cuda:
+        logging.info(f'Using device: {torch.cuda.get_device_name()}')
+
+    # For reproducibility:
+    #     c.f. https://pytorch.org/docs/stable/notes/randomness.html
+    if args.seed is None:
+        args.seed = torch.randint(0, 2 ** 32, (1,)).item()
+        logging.info(f'You did not set --seed, {args.seed} was chosen')
+
+    if use_cuda:
+        setup_cuda(args.seed, device)
+
+    config_args = [str(vv) for kk, vv in vars(args).items()
+                   if kk in ['batch_size', 'lr', 'gamma', 'seed']]
+    model_name = '_'.join(config_args)
+
+    if not os.path.exists(args.output):
+        logging.info(f'{args.output} does not exist, creating...')
+        os.makedirs(args.output)
+
+    loader_params, dset_params = get_loader_params(badge_name, args=args)
+
+    dset_train = so_data.StackOverflowDatasetIncCounts(
+                            dset_type='train',
+                            subsample=15000,
+                            **dset_params,
+                            self_initialise=True
+                        )
+    scalers = dset_train.get_scalers()
+    dset_valid = so_data.StackOverflowDatasetIncCounts(
+                            dset_type='validate',
+                            subsample=5000,
+                            centered=True,
+                            **dset_params,
+                            scaler_in=scalers[0],
+                            scaler_out=scalers[1])
+
+    train_loader = DataLoader(dset_train, **loader_params)
+    valid_loader = DataLoader(dset_valid, **loader_params)
+
+    print(args.model_name)
+    model_class = available_models[args.model_name]
 
     dset_shape = dset_train.data_shape
+    model = model_class(
+                obsdim=dset_shape[0] * dset_shape[1],
+                outdim=dset_shape[0],
+                device=device,
+                proximity_to_badge=True
+            ).to(device)
 
-    for name, model_class in model_to_test.items():
+    model_name = f'{badge_name}-' + args.model_name + "-" + model_name + '.pt'
+    PATH_TO_MODEL = args.output+'/models/'+model_name
 
-        model = model_class(obsdim=dset_shape[0]*dset_shape[1], outdim=window_len*2, device=device, proximity_to_badge=True).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.9999)
+    if os.path.exists(PATH_TO_MODEL):
+        model.load_state_dict(torch.load(PATH_TO_MODEL, map_location=device))
 
-        loss = lambda x1,x2,x3: models.BCE_loss_function(x1,x2,x3, data_shape=dset_shape, act_choice=5)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.gamma)
 
-        print("Training model for: {}".format(name))
-        model = train_model(model, train_loader, valid_loader, optimizer, scheduler, loss,
-                            NUM_EPOCHS=max_epochs, PRINT_NUM=PRINT_NUM, name=name)
+    if not os.path.exists(f'{args.output}/logs/'):
+        os.mkdir(f'{args.output}/logs/')
 
-        print("Done")
-        print("Saving model into ../models/{}".format(name))
-        torch.save(model.state_dict(), "../models/{}.pt".format(name))
+    log_fh = open(f'{args.output}/logs/{model_name}.log', 'w')
+    best_loss = sys.float_info.max
 
-def train_model(model, train_loader, valid_loader, optimizer, scheduler, loss_fn, NUM_EPOCHS, PRINT_NUM=25, name=''):
+    results_file = open(f'{args.output}/results.csv', 'a')
+    results_file.write(f'{model_name},{args.batch_size},{args.lr},{args.gamma},'
+                       f'{args.seed},')
 
-    for i in tqdm(np.arange(NUM_EPOCHS)):
-        model.train()
-        train_loss = 0
-        # if name == 'full_personalised_parameterised_plus_flow':
-        beta = torch.tensor(1-(NUM_EPOCHS-i)/NUM_EPOCHS).to(device)
-        # else:
-        #     beta = torch.tensor(1).float().to(device)
+    count_valid_not_improving = 0
 
-        for train_in, kernel_data, train_out, train_prox, badge_date in train_loader:
-            optimizer.zero_grad()
-            # Transfer to GPU
-            train_in, kernel_data, train_out, train_prox, badge_date = train_in.to(device), kernel_data.to(device), train_out.to(device), train_prox.to(device), badge_date.to(device)
+    for epoch in tqdm(range(1, args.epochs + 1), disable=use_cuda):
 
-            # Model computations
-            recon_batch, latent_loss = model(train_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=train_prox)
+        loss = train(args, model, device, train_loader, optimizer, epoch)
+        vld_loss = test(args, model, device, valid_loader)
 
-            size = recon_batch.size()
-            index = torch.ones_like(recon_batch)
-            # index[torch.arange(len(recon_batch)), badge_date.long()] = 0
-            # index[torch.arange(len(recon_batch)), (badge_date - 1).long()] = 0
-            # index[torch.arange(len(recon_batch)), ((badge_date + 1)%len(recon_batch[0])).long()] = 0
-            index = (index == 1)
+        print(f'{epoch},{loss},{vld_loss}', file=log_fh)
+        scheduler.step()
 
-            loss = loss_fn(recon_batch[index].view(size[0], -1), train_out[index].view(size[0], -1), beta*latent_loss)
-            loss.backward()
+        results_file.write(f'{vld_loss},')
 
-            optimizer.step()
-            scheduler.step()
+        if vld_loss < best_loss:
+            # only save the model if it is performing better on the validation set
+            best_loss = vld_loss
+            torch.save(model.state_dict(),
+                       f"{args.output}/models/{model_name}.best.pt")
+            count_valid_not_improving = 0
 
-            train_loss += loss.item()
+        # early stopping
+        else:
+            count_valid_not_improving += 1
 
-        if i%PRINT_NUM==0:
+        if count_valid_not_improving > args.early_stopping_lim:
+            print(f'Early stopping implemented at epoch #: {epoch}')
+            break
 
+    results_file.write('\n')
+    torch.save(model.state_dict(), f"{args.output}/models/{model_name}.final.pt")
 
-            model.eval()
-            validation_loss = 0
-            for val_in, kernel_data, val_out, val_prox, badge_date in valid_loader:
-                # Transfer to GPU
-                val_in, kernel_data, val_out, val_prox, badge_date = val_in.to(device), kernel_data.to(device), val_out.to(device), val_prox.to(device), badge_date.to(device)
-                recon_batch, latent_loss = model(val_in, kernel_data=kernel_data, dob=badge_date, prox_to_badge=val_prox)
-
-                loss = loss_fn(recon_batch, val_out, latent_loss)
-                validation_loss += loss.item()
-
-            print('====> Epoch: {} Average Valid loss: {:.4f}'.format(i, validation_loss/len(valid_loader.dataset)))
-            torch.save(model.state_dict(), "../models/{}.pt".format(name))
-
-            model.train()
-    return model
+    results_file.close()
+    log_fh.close()
 
 
+def train(args, model, device, train_loader, optimizer, epoch):
+    model.train()
+    train_loss = 0
+    correct = 0
+    beta = 1
+
+    for batch_idx, (data) in enumerate(train_loader):
+        data = [d.to(device) for d in data]
+        dat_in, dat_kern, dat_out, dat_prox, dat_badge_date = data
+
+        optimizer.zero_grad()
+        # Model computations
+        recon_batch, latent_loss = model(dat_in,
+                                         kernel_data=dat_kern,
+                                         dob=dat_badge_date,
+                                         prox_to_badge=dat_prox)
+        loss = loss_fn(recon_batch, dat_out, beta * latent_loss)
+        loss.backward()
+        # TODO: clip grad norm here?
+        optimizer.step()
+
+        train_loss += loss.item()
+
+        if batch_idx % args.log_interval == 0 and not args.quiet:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(train_loader.dataset),
+                       100. * batch_idx / len(train_loader), loss.item()))
+    return train_loss/len(train_loader.dataset)
 
 
-badge_threshold = 500
-badge_type = "Electorate"
-l1_loss = torch.nn.L1Loss(reduction='sum')
-
-def build_data(data):
-    train_x, val_x, test_x = [], [], []
-    train_y, val_y, test_y = [], [], []
-    test_yT = {}
-    day_of_badge = {}
-
-    for label, dset, outcome in tqdm(zip(['train', 'valid', 'test'],
-                                                  [train_x, val_x, test_x],
-                                                  [train_y, val_y, test_y])):
-
-        seqs = [s.numpy() for s in data[label]['sequences']]
-        badges = data[label]['outcomes']
-        mask = np.ones(90).astype(bool)
-
-        seq_shape = list(seqs[0].shape)
-        seq_shape[0] = np.sum(mask)
-
-        input_vecs = np.zeros(shape=(len(seqs), np.sum(mask), seq_shape[1]))
-        proximity = np.zeros(shape=(len(seqs), np.sum(mask)))
-
-        for i, seq in enumerate(seqs):
-            if badge_type in badges[i]:
-                badge_day = 45
-                acts_for_badge = seq[:, 5]
-
-                cs = np.cumsum(acts_for_badge)
-                cs[45:] += 1
-                cs[46:] += 1
-
-                proximity[i] = cs[mask]
-                proximity[i] = (proximity[i] - cs[45]) + badge_threshold
-                proximity[i][proximity[i] < 0] = 0
-                proximity[i][proximity[i] > badge_threshold] = 0
-
-            input_vecs[i] = np.array(seq)[mask]
-
-
-        sequence_data = input_vecs
-
-        lookback = 56
-        offset = (seq_shape[0] - lookback) // 7
-
-        inputs = np.zeros((len(sequence_data) * offset, lookback, seq_shape[1]))
-        outputs = np.zeros((len(sequence_data) * offset, 7))
-        prox_to_badge = np.zeros((len(sequence_data) * offset, lookback))
-        badge_day = np.zeros(len(sequence_data)* offset)
-
-        for i, seq in enumerate(sequence_data):
-            for j in np.arange(lookback, seq_shape[0] - 7, 7):
-                #             print(i*offset + (j - lookback)//7)
-                inputs[i * offset + (j - lookback) // 7] = seq[j - lookback:j, [0, 1, 2, 3, 4, 5, 6]]
-                outputs[i * offset + (j - lookback) // 7] = seq[j:j + 7, 5] > 1
-                prox_to_badge[i * offset + (j - lookback) // 7] = proximity[i][j - lookback:j]
-                badge_day[i * offset + (j - lookback) // 7] = 45 - (j-lookback)
-                #         inputs[(i * offset + (j - lookback))] = seq[j - lookback: j, [0,1,2,3,6]]
-                #         labels[(i * offset + (j - lookback))] = (input_vecs[i, j, 5]) > 0
-                #         prox_to_badge[(i * offset + (j - lookback))] = proximity[i, j - lookback: j]
-
-        dset.append(inputs)
-        outcome.append(outputs)
-        test_yT[label] = prox_to_badge
-        day_of_badge[label] = badge_day.astype(int)
-
-    return train_x[0], test_yT['train'], day_of_badge['train'], test_x[0], test_yT['test'], day_of_badge['test']
-
-
-def test(model, device, test_loader, loss, dset_shape):
-
+def test(args, model, device, valid_loader):
     model.eval()
     test_loss = 0
 
     with torch.no_grad():
-        for i, (data, prox, dob,) in enumerate(test_loader):
-            data = data.to(device)
-            prox = prox.to(device)
-            recon_batch, mu, logvar = model(data, prox, dob)
+        for batch_idx, (data) in enumerate(valid_loader):
+            data = [d.to(device) for d in data if type(d) == torch.Tensor]
+            dat_in, dat_kern, dat_out, dat_prox, dat_badge_date = data
 
-            test_loss += loss(recon_batch, data, mu, logvar, dset_shape[1], dset_shape[2]).item()
+            recon_batch, latent_loss = model(dat_in,
+                                            kernel_data=dat_kern,
+                                            dob=dat_badge_date,
+                                            prox_to_badge=dat_prox)
 
-    test_loss /= len(test_loader.dataset)
-    print('====> Test set loss: {:.4f}'.format(test_loss))
+            loss = loss_fn(recon_batch, dat_out, latent_loss)
+            test_loss += loss.item()
 
+    test_loss /= len(valid_loader.dataset)
+    print('\nTest set: Average loss: {:.4f}'.format(test_loss))
 
-def test_on_votes_only(model, loader, dset_shape, device):
-
-    model.eval()
-    test_loss, pred_len = 0, 0
-    true_num_1 = 0
-    true_num_pos = 0
-    pred_pos_len = 0
-    false_num_pos = 0
-    total_pred_pos = 0
-    log_likelihood = 0
-
-    with torch.no_grad():
-        for i, (data, prox, dob) in enumerate(loader):
-            data = data.to(device)
-            prox = prox.to(device)
-            recon_batch, mu, logvar = model(data, prox, dob)
-
-            pp = recon_batch.cpu().detach().numpy().reshape(-1, dset_shape[1])
-            pred = (recon_batch.cpu().detach().numpy().reshape(-1, dset_shape[1]) > 0.5).astype(int)
-            true = (data.detach().cpu().numpy().reshape(-1, dset_shape[1], dset_shape[2])).astype(int)
-            true[true > 0] = 1
-
-            for t1, p1, pp_ in zip(true, pred, pp):
-                log_likelihood += np.sum(np.log(pp_) * t1[:, 5] + np.log(1 - pp_) * (1 - t1[:, 5] ))
-                true_num_1 += np.sum(t1[:,5])
-                test_loss += np.sum(p1 == t1[:,5])
-
-                pred_len += len(p1)
-
-                true_num_pos += np.sum(t1[:, 5][t1[:, 5] == 1] == p1[t1[:, 5] == 1])
-                pred_pos_len += np.sum(t1[:, 5] == 1)
-
-                false_num_pos += np.sum(t1[:, 5][p1 == 1])
-                total_pred_pos += np.sum(p1 == 1)
+    return test_loss
 
 
-    print('====> Action specific accuracy: {:.4f}'.format(test_loss/pred_len))
-    print('====> Recall: {:.4f}'.format(true_num_pos / pred_pos_len))
-    print('====> Precision: {:.4f}'.format(false_num_pos / total_pred_pos))
-    print('====> Log-likelihood: {:.4f}'.format(log_likelihood/(i*len(pp_))))
-    print('====> Baseline count: {:.4f}'.format(true_num_1 / pred_len))
-    print()
+def main_electorate(args):
+    main("electorate", args)
+
+
+def main_civic_duty(args):
+    main("civic_duty", args)
+
+
+def main_strunk_white(args):
+    main("strunk_white", args)
+
+
+def construct_parser():
+    # Training settings
+    parser = argparse.ArgumentParser(description='PyTorch main script to run inference detailed here: '
+                                                 'https://arxiv.org/abs/2002.06160'
+                                                 'on the population of users who achieved Strunk & White')
+
+    parser.add_argument('--batch-size', type=int, default=128, metavar='N',
+                        help='input batch size for training (default: 128)')
+    parser.add_argument('--early-stopping-lim', type=int, default=10, metavar='N',
+                        help='Early stopping implemented after N epochs with no improvement '
+                             '(default: 10)')
+    parser.add_argument('--test-batch-size', type=int, default=1000,
+                        metavar='N', help='input batch size for testing '
+                                          '(default: 1000)')
+    parser.add_argument('--epochs', type=int, default=1000, metavar='N',
+                        help='number of epochs to train (default: 1000)')
+    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
+                        help='learning rate (default: 0.001)')
+    parser.add_argument('--gamma', type=float, default=0.9, metavar='M',
+                        help='Learning rate step gamma (default: 0.9)')
+    parser.add_argument('--no-cuda', action='store_true', default=False,
+                        help='disables CUDA training')
+    parser.add_argument('--quiet', action='store_true', default=False,
+                        help='Limits the about of output to std.out')
+    parser.add_argument('--seed', type=int, default=None, metavar='S',
+                        help='random seed (default: random number)')
+    parser.add_argument('--log-interval', type=int, default=10, metavar='N',
+                        help='how many batches to wait before logging training status (default: 10)')
+    parser.add_argument('--window-length', type=int, default=35, metavar='N',
+                        help='how long is the window that is considered before / after a badge (default: 35)')
+    parser.add_argument('-M', '--model-name', default="full_personalised_normalizing_flow", required=False,
+                        help='Choose the model to run')
+    parser.add_argument('-b', '--badge', required=True, help='badge name for experiment')
+    parser.add_argument('-i', '--input', required=True, help='Path to the input data for the model to read')
+    parser.add_argument('-o', '--output', required=True, help='Path to the directory to write output to')
+    return parser
 
 if __name__ == "__main__":
-    main([])
+
+    parser = construct_parser()
+    args = parser.parse_args()
+
+    if args.badge == "electorate":
+        main_electorate(args)
+
+    elif args.badge == "strunk_white":
+        main_strunk_white(args)
+
+    elif args.badge == "civic_duty":
+        main_civic_duty(args)

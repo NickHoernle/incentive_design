@@ -566,14 +566,20 @@ def transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to
 if __name__ == '__main__':
     import pandas as pd
 
-    #### BUILD THE INPUT FILE ####
-    input_a_fs = ['../data/'+ f for f in [f'actions-{date}-01.csv' for date in [2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019]]]
-    input_b_fs = ['../data/'+ f for f in [f'badges-{date}-01.csv' for date in [2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019]]]
-    compile_smaller_files(input_a_fs, input_b_fs)
+    ##########################################################
+    ###### EDITING
+    ##########################################################
+    # download the editing data from: https://data.stackexchange.com/stackoverflow/query/1216727/so-badges-work-count-edits-per-day-for-strunk-and-white-users
+    # #### BUILD THE INPUT FILE ####
+    # input_a_fs = ['../data/'+ f for f in [f'actions-{date}-01.csv' for date in [2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019]]]
+    # input_b_fs = ['../data/'+ f for f in [f'badges-{date}-01.csv' for date in [2009,2010,2011,2012,2013,2014,2015,2016,2017,2018,2019]]]
+    # compile_smaller_files(input_a_fs, input_b_fs)
+    #
+    # #### BUILD THE TORCH INPUT FILES ####
+    # path_to_csv_actions = '../data/actions_over_time.csv'
+    # path_to_csv_badges = '../data/strunk_and_white_achievements.csv'
+    # data_dir = '../data/pt_editor'
+    #
+    # transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to_csv_badges, data_dir)
 
-    #### BUILD THE TORCH INPUT FILES ####
-    path_to_csv_actions = '../data/actions_over_time.csv'
-    path_to_csv_badges = '../data/strunk_and_white_achievements.csv'
-    data_dir = '../data/pt_editor'
-    
-    transform_editing_data_to_file_folder_structure(path_to_csv_actions, path_to_csv_badges, data_dir)
+    transform_data_to_file_folder_structure("../data/so_badges.csv", "../data/pt_electorate")
