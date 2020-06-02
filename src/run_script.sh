@@ -83,7 +83,7 @@ echo "Moving input data to the compute node's scratch space: $SCRATCH_DISK"
 
 # input data directory path on the DFS - change line below if loc different
 repo_home=/home/${USER}/git/incentive_design
-src_path=${repo_home}/data/pt_editor.zip
+src_path=${repo_home}/data/pt_electorate.zip
 
 # input data directory path on the scratch disk of the node
 dest_path=${SCRATCH_DISK}/${USER}/incentive_design/data
@@ -101,8 +101,8 @@ mkdir -p ${dest_path}  # make it if required
 
 # clear the existing data directory
 
-pt_editor=${dest_path}/pt_editor.zip
-pt_editor_folder=${dest_path}/pt_editor
+pt_editor=${dest_path}/pt_electorate.zip
+pt_editor_folder=${dest_path}/pt_electorate
 
 # sleep a random amount of time to allow other scripts to process this stuff
 sleep $[ ( $RANDOM % 60 )  + 1 ]s
@@ -119,14 +119,14 @@ else
         sleep 1m
     else
         echo "Ok fine so unzip the bastard"
-        unzip -q -o ${dest_path}/pt_editor.zip -d ${dest_path}
+        unzip -q -o ${dest_path}/pt_electorate.zip -d ${dest_path}
     fi
 fi
 
 # unzip the torch files in the destination directory
 #unzip -q -f ${dest_path}/pt_data.zip -d ${dest_path}
 
-num_lines=$(ls -l ${dest_path}/pt_editor/* | wc -l)
+num_lines=$(ls -l ${dest_path}/pt_electorate/* | wc -l)
 echo "Number of files at the destination: ${num_lines}"
 
 
@@ -139,8 +139,8 @@ echo "Number of files at the destination: ${num_lines}"
 # you execute `sbatch --array=1:100 ...` the jobs will get numbers 1 to 100
 # inclusive.
 
-input_dir=${dest_path}/pt_editor
-output_dir=${dest_path}/output
+input_dir=${dest_path}/pt_electorate
+output_dir=${dest_path}/electorate
 
 mkdir -p ${output_dir}
 mkdir -p ${output_dir}/models

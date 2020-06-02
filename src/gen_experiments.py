@@ -10,7 +10,7 @@ SCRATCH_DISK = '/disk/scratch'
 SCRATCH_HOME = f'{SCRATCH_DISK}/{USER}'
 
 DATA_HOME = f'{SCRATCH_HOME}/incentive_design/data'
-base_call = (f"python main.py --badge electorate --input {DATA_HOME}/pt_electorate --output {DATA_HOME}/output "
+base_call = (f"python main.py --badge electorate --input {DATA_HOME}/pt_electorate --output {DATA_HOME}/electorate "
              "--epochs 2000 --early-stopping-lim 250 --model-name full_personalised_normalizing_flow --quiet")
 
 repeats = 1
